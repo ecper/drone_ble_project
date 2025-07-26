@@ -256,24 +256,58 @@ class CommandCharacteristic(Characteristic):
         iPhoneアプリがCOMMAND_CHARACTERISTICにデータを書き込んだときに呼び出される。
         """
         try:
+            # デバッグ: 受信したデータの詳細情報を表示
+            logger.info(f"Raw value type: {type(value)}, length: {len(value)}")
+            logger.info(f"Raw value bytes: {[hex(b) for b in value]}")
+            
+            # 空のデータチェック
+            if not value or len(value) == 0:
+                logger.warning("Received empty BLE command")
+                GLib.idle_add(send_status_notification, "ERR:Empty_CMD")
+                return
+            
+            # UTF-8デコード試行
             command_str = bytes(value).decode('utf-8').strip()
             logger.info(f"Received BLE command: '{command_str}'")
+
+            # 空文字列チェック
+            if not command_str:
+                logger.warning("Command string is empty after decoding")
+                GLib.idle_add(send_status_notification, "ERR:Empty_STR")
+                return
 
             # I2CでArduinoにコマンドを送信
             if bus: # I2Cバスが初期化されているか確認
                 # 文字列をバイトのリストに変換
                 data_bytes = [ord(char) for char in command_str]
                 # ArduinoにI2Cで書き込み (write_i2c_block_data を使用)
-                bus.write_i2c_block_data(ARDUINO_I2C_ADDRESS, 0, data_bytes) # 0はレジスタアドレス（任意）
-                logger.info(f"Sent to Arduino via I2C: '{command_str}'")
-                GLib.idle_add(send_status_notification, f"CMD_RX:{command_str[:15]}")
+                try:
+                    bus.write_i2c_block_data(ARDUINO_I2C_ADDRESS, 0, data_bytes) # 0はレジスタアドレス（任意）
+                    logger.info(f"Sent to Arduino via I2C: '{command_str}'")
+                    GLib.idle_add(send_status_notification, f"CMD_RX:{command_str[:15]}")
+                except Exception as i2c_error:
+                    logger.error(f"I2C write error: {i2c_error}")
+                    GLib.idle_add(send_status_notification, "ERR:I2C_Write")
             else:
                 logger.warning("I2C bus not initialized. Command not forwarded.")
                 GLib.idle_add(send_status_notification, "ERR:I2C_Not_Ready")
 
-        except UnicodeDecodeError:
-            logger.error("Failed to decode BLE data (not UTF-8).")
-            GLib.idle_add(send_status_notification, "ERR:Decode")
+        except UnicodeDecodeError as e:
+            logger.error(f"Failed to decode BLE data (not UTF-8): {e}")
+            logger.error(f"Raw bytes that failed to decode: {[hex(b) for b in value]}")
+            # 生のバイトデータとして処理を試みる
+            try:
+                # ASCII範囲内の文字のみ抽出
+                ascii_chars = [chr(b) for b in value if 32 <= b <= 126]
+                if ascii_chars:
+                    command_str = ''.join(ascii_chars)
+                    logger.info(f"Extracted ASCII command: '{command_str}'")
+                    GLib.idle_add(send_status_notification, f"ASCII:{command_str[:13]}")
+                else:
+                    GLib.idle_add(send_status_notification, "ERR:No_ASCII")
+            except Exception as extract_error:
+                logger.error(f"Failed to extract ASCII: {extract_error}")
+                GLib.idle_add(send_status_notification, "ERR:Decode")
         except Exception as e:
             logger.error(f"Error processing command: {e}")
             GLib.idle_add(send_status_notification, f"ERR:{str(e)[:20]}")
