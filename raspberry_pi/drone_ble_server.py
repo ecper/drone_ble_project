@@ -389,6 +389,8 @@ class Advertisement(dbus.service.Object):
         self.solicit_uuids = None
         self.service_data = None
         self.include_tx_power = False
+        # ペアリング不要のBLEペリフェラルとして動作
+        self.discoverable = True
         dbus.service.Object.__init__(self, bus_obj, self.path)
 
     def get_properties(self):
@@ -407,6 +409,8 @@ class Advertisement(dbus.service.Object):
             properties['IncludeTxPower'] = dbus.Boolean(self.include_tx_power)
         if hasattr(self, 'local_name') and self.local_name is not None:
             properties['LocalName'] = self.local_name
+        # BLEペリフェラルとして動作（ペアリング不要）
+        properties['Discoverable'] = dbus.Boolean(True)
         return {LE_ADVERTISEMENT_IFACE: properties}
 
     def get_path(self):
