@@ -186,6 +186,7 @@ class Characteristic(dbus.service.Object):
     @dbus.service.method(GATT_CHRC_IFACE, in_signature='a{sv}', out_signature='ay')
     def ReadValue(self, options):
         logger.info(f"ReadValue called for {self.uuid}")
+        logger.info(f"Options: {options}")
         return dbus.Array(b'Default Value', signature='y')
 
     @dbus.service.method(GATT_CHRC_IFACE, in_signature='aya{sv}')
@@ -248,8 +249,9 @@ class DroneService(Service):
 
 class CommandCharacteristic(Characteristic):
     def __init__(self, bus_obj, index, service):
+        # セキュリティなしで書き込み可能に設定
         super().__init__(bus_obj, index, COMMAND_CHARACTERISTIC_UUID,
-                         ['write', 'write-without-response'], service)
+                         ['write-without-response'], service)
 
     def WriteValue(self, value, options):
         """
@@ -489,6 +491,24 @@ def check_system_requirements():
     return True
 
 # --- メイン関数 ---
+def setup_bluetooth_no_pairing():
+    """Bluetoothペアリング要求を無効化"""
+    import subprocess
+    try:
+        # bluetoothctlでペアリング不要の設定
+        commands = [
+            ["bluetoothctl", "power", "on"],
+            ["bluetoothctl", "pairable", "on"],
+            ["bluetoothctl", "discoverable", "on"],
+            ["bluetoothctl", "agent", "NoInputNoOutput"],
+            ["bluetoothctl", "default-agent"]
+        ]
+        for cmd in commands:
+            subprocess.run(cmd, capture_output=True)
+        logger.info("Bluetooth configured for no pairing")
+    except Exception as e:
+        logger.warning(f"Could not configure bluetooth: {e}")
+
 def main():
     global bus, status_characteristic_obj # I2Cバスオブジェクトもグローバルに設定
 
@@ -496,6 +516,9 @@ def main():
     if not check_system_requirements():
         logger.error("System requirements not met. Exiting.")
         sys.exit(1)
+    
+    # Bluetoothペアリング設定
+    setup_bluetooth_no_pairing()
 
     # 1. I2Cバスの初期化
     try:
@@ -556,6 +579,7 @@ def main():
     advertisement = Advertisement(dbus_bus, 0, 'peripheral')
     advertisement.add_service_uuid(DRONE_SERVICE_UUID)
     advertisement.add_local_name("RaspberryPiDrone") # デバイス名を設定
+    advertisement.include_tx_power = True  # 送信電力を含める（ペアリング不要のヒント）
 
     logger.info("Registering BLE Advertisement...")
     ad_manager.RegisterAdvertisement(advertisement.get_path(), {},
