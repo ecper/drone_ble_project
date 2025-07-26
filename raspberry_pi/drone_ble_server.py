@@ -92,7 +92,7 @@ class Application(dbus.service.Object):
     def add_service(self, service):
         self.services.append(service)
 
-    @dbus.service.method(DBUS_OM_IFACE, out_signature='ao', signature='a{osv}')
+    @dbus.service.method(DBUS_OM_IFACE, out_signature='a{oa{sa{sv}}}')
     def GetManagedObjects(self):
         response = {}
         for service in self.services:
@@ -314,14 +314,13 @@ class StatusCharacteristic(Characteristic):
         self.notifying = False
         logger.info("Stopped notifying for StatusCharacteristic.")
 
+    @dbus.service.signal(DBUS_PROP_IFACE, signature='sa{sv}as')
     def PropertiesChanged(self, interface, changed_properties, invalidated_properties):
         """
         GATTCharacteristic1インターフェースのPropertiesChangedシグナルを送信するヘルパー関数。
         これにより、購読しているクライアントに値の変更を通知できる。
         """
-        dbus.service.Object.PropertiesChanged(
-            self, interface, changed_properties, invalidated_properties
-        )
+        pass
 
 def send_status_notification(status_message: str):
     """
