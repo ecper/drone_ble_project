@@ -8,11 +8,11 @@ rm -rf ios android node_modules package-lock.json
 
 # 2. 依存関係のインストール
 echo "📦 依存関係をインストール中..."
-npm install
+npm install --force
 
 # 3. Expoプレビルド（プラグインをスキップ）
 echo "🔨 iOSプロジェクトを生成中..."
-npx expo prebuild --platform ios --clear
+npx expo prebuild --platform ios
 
 # 4. react-native-ble-plxの手動リンク
 echo "🔗 BLEライブラリをリンク中..."
