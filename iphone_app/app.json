@@ -22,6 +22,14 @@
         "NSBluetoothPeripheralUsageDescription": "このアプリはドローンとBluetooth通信を行うためにBluetoothを使用します。"
       }
     },
-    "plugins": []
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": ["peripheral", "central"]
+        }
+      ]
+    ]
   }
 }
