@@ -4,13 +4,13 @@ export default {
     slug: "drone-controller",
     version: "1.0.0",
     orientation: "portrait",
-    icon: "./assets/icon.png",
+    // icon: "./assets/icon.png", // 一時的にコメントアウト
     userInterfaceStyle: "light",
-    splash: {
-      image: "./assets/splash.png",
-      resizeMode: "contain",
-      backgroundColor: "#ffffff"
-    },
+    // splash: {
+    //   image: "./assets/splash.png",
+    //   resizeMode: "contain",
+    //   backgroundColor: "#ffffff"
+    // },
     assetBundlePatterns: ["**/*"],
     ios: {
       supportsTablet: true,
