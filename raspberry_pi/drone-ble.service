@@ -6,8 +6,8 @@ Wants=bluetooth.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/uchida/Documents/fov-prog/drone_ble_project/raspberry_pi
-ExecStart=/usr/bin/python3 /home/uchida/Documents/fov-prog/drone_ble_project/raspberry_pi/drone_ble_server.py
+WorkingDirectory=/home/drone/drone_ble_project/rasberry_pi
+ExecStart=/usr/bin/python3 /home/drone/drone_ble_project/rasberry_pi/drone_ble_server.py
 Restart=always
 RestartSec=5
 StandardOutput=journal
