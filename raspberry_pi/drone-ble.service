@@ -1,0 +1,20 @@
+[Unit]
+Description=Drone BLE Server
+After=network.target bluetooth.target
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/uchida/Documents/fov-prog/drone_ble_project/raspberry_pi
+ExecStart=/usr/bin/python3 /home/uchida/Documents/fov-prog/drone_ble_project/raspberry_pi/drone_ble_server.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Bluetooth権限のため
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

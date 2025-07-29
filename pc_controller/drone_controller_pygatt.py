@@ -27,7 +27,6 @@ class DroneController:
         self.adapter = None
         self.device = None
         self.connected = False
-        self.throttle = 0
         self.status_queue = queue.Queue()
 
     def connect_to_device(self):
@@ -78,9 +77,7 @@ class DroneController:
 
         try:
             command = "RUN"
-            self.device.char_write(
-                COMMAND_UUID, command.encode(), wait_for_response=False
-            )
+            self.send_command(command)
             logger.info(f"コマンド送信: {command}")
             return True
         except Exception as e:
@@ -95,26 +92,21 @@ class DroneController:
 
         try:
             command = "STOP"
-            self.device.char_write(
-                COMMAND_UUID, command.encode(), wait_for_response=False
-            )
+            self.send_command(command)
             logger.info(f"コマンド送信: {command}")
             return True
         except Exception as e:
             logger.error(f"送信エラー: {e}")
             return False
 
-    def send_command(self, throttle=None, pitch=0, roll=0, yaw=0):
+    def send_command(self, command: str = None):
         """コマンド送信"""
         if not self.connected or not self.device:
             logger.warning("未接続のためコマンドを送信できません")
             return False
 
         try:
-            if throttle is not None:
-                self.throttle = throttle
-
-            command = f"T{self.throttle},P{pitch},R{roll},Y{yaw}"
+            command = f"{command}"
             self.device.char_write(
                 COMMAND_UUID, command.encode(), wait_for_response=False
             )
@@ -123,6 +115,22 @@ class DroneController:
 
         except Exception as e:
             logger.error(f"送信エラー: {e}")
+            return False
+    
+    def send_parameter(self, param_name, value):
+        """パラメータ設定コマンド送信"""
+        if not self.connected or not self.device:
+            logger.warning("未接続のためパラメータを送信できません")
+            return False
+        
+        try:
+            command = f"SET:{param_name}={value}"
+            self.device.char_write(COMMAND_UUID, command.encode(), wait_for_response=False)
+            logger.info(f"パラメータ送信: {command}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"パラメータ送信エラー: {e}")
             return False
 
     def disconnect(self):
@@ -141,7 +149,7 @@ class DroneControllerGUI:
         self.controller = DroneController()
         self.root = tk.Tk()
         self.root.title("ドローンコントローラー (pygatt)")
-        self.root.geometry("600x700")
+        self.root.geometry("700x900")
 
         self.setup_ui()
         self.update_status()
@@ -186,26 +194,12 @@ class DroneControllerGUI:
         )
         self.disconnect_button.pack(side=tk.LEFT, padx=5)
 
-        # スロットル制御
-        throttle_frame = ttk.LabelFrame(self.root, text="スロットル制御", padding="10")
-        throttle_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        self.throttle_var = tk.IntVar(value=0)
-        self.throttle_label = ttk.Label(throttle_frame, text="0%", font=("Arial", 16))
-        self.throttle_label.pack()
-
-        self.throttle_scale = ttk.Scale(
-            throttle_frame,
-            from_=0,
-            to=100,
-            variable=self.throttle_var,
-            orient=tk.HORIZONTAL,
-            command=self.update_throttle,
-        )
-        self.throttle_scale.pack(fill=tk.X, pady=10)
+        # 起動ボタン
+        start_button_frame = ttk.LabelFrame(self.root, text="起動ボタン", padding="10")
+        start_button_frame.pack(fill=tk.X, padx=10, pady=10)
 
         # 起動ボタン
-        start_button_frame = ttk.Frame(throttle_frame)
+        start_button_frame = ttk.Frame(start_button_frame)
         start_button_frame.pack()
 
         ttk.Button(
@@ -221,61 +215,145 @@ class DroneControllerGUI:
             command=self.stop_drone,
             width=20,
         ).pack(side=tk.LEFT, padx=5)
+        
+        # パラメータ設定（折りたたみ可能）
+        parameter_frame = ttk.LabelFrame(self.root, text="パラメータ設定", padding="5")
+        parameter_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # パラメータ定義
+        self.parameters = {
+            'ESC_MIN': {'label': 'ESC最小値', 'default': 1000, 'min': 900, 'max': 1200},
+            'ESC_MAX': {'label': 'ESC最大値', 'default': 2000, 'min': 1800, 'max': 2100},
+            'HOVER_THR': {'label': 'ホバリングスロットル', 'default': 1500, 'min': 1200, 'max': 1800},
+            'LAND_THR': {'label': '着陸スロットル', 'default': 1300, 'min': 1000, 'max': 1500},
+            'DELTA_XY': {'label': 'XY移動量', 'default': 50, 'min': 10, 'max': 200},
+            'DELTA_Z': {'label': 'Z移動量', 'default': 30, 'min': 10, 'max': 100}
+        }
+        
+        # パラメータ入力フィールドを作成（2列配置）
+        self.param_vars = {}
+        self.param_entries = {}
+        
+        # 2列のフレーム作成
+        params_list = list(self.parameters.items())
+        
+        for i in range(0, len(params_list), 2):
+            row_frame = ttk.Frame(parameter_frame)
+            row_frame.pack(fill=tk.X, pady=2)
+            
+            # 左列
+            if i < len(params_list):
+                param_name, param_info = params_list[i]
+                col_frame = ttk.Frame(row_frame)
+                col_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                
+                ttk.Label(col_frame, text=f"{param_info['label']}:", width=15).pack(side=tk.LEFT)
+                
+                var = tk.IntVar(value=param_info['default'])
+                self.param_vars[param_name] = var
+                
+                entry = ttk.Entry(col_frame, textvariable=var, width=8)
+                entry.pack(side=tk.LEFT, padx=2)
+                self.param_entries[param_name] = entry
+                
+                ttk.Label(col_frame, text=f"({param_info['min']}-{param_info['max']})", font=("Arial", 8)).pack(side=tk.LEFT)
+                
+                ttk.Button(col_frame, text="設定", width=6,
+                          command=lambda pn=param_name: self.send_parameter(pn)).pack(side=tk.LEFT, padx=2)
+            
+            # 右列
+            if i + 1 < len(params_list):
+                param_name, param_info = params_list[i + 1]
+                col_frame = ttk.Frame(row_frame)
+                col_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 0))
+                
+                ttk.Label(col_frame, text=f"{param_info['label']}:", width=15).pack(side=tk.LEFT)
+                
+                var = tk.IntVar(value=param_info['default'])
+                self.param_vars[param_name] = var
+                
+                entry = ttk.Entry(col_frame, textvariable=var, width=8)
+                entry.pack(side=tk.LEFT, padx=2)
+                self.param_entries[param_name] = entry
+                
+                ttk.Label(col_frame, text=f"({param_info['min']}-{param_info['max']})", font=("Arial", 8)).pack(side=tk.LEFT)
+                
+                ttk.Button(col_frame, text="設定", width=6,
+                          command=lambda pn=param_name: self.send_parameter(pn)).pack(side=tk.LEFT, padx=2)
+        
+        # 全パラメータ送信ボタン
+        ttk.Button(parameter_frame, text="全パラメータを送信", 
+                  command=self.send_all_parameters).pack(pady=5)
 
         # 方向制御
         direction_frame = ttk.LabelFrame(self.root, text="方向制御", padding="10")
-        direction_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        direction_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        # 方向ボタン
+        # メインレイアウト（左右分割）
+        main_layout_frame = ttk.Frame(direction_frame)
+        main_layout_frame.pack(fill=tk.BOTH, expand=True)
+
+        # 左側フレーム（上昇・左回転・右回転・下降）
+        left_frame = ttk.LabelFrame(main_layout_frame, text="上下・回転", padding="5")
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+
+        # 上昇ボタン
         ttk.Button(
-            direction_frame,
-            text="前進\n↑",
+            left_frame,
+            text="上昇",
             width=10,
-            command=lambda: self.send_direction_command(pitch=10),
+            command=lambda: self.send_direction_command("UP"),
         ).pack(pady=5)
 
-        middle_frame = ttk.Frame(direction_frame)
-        middle_frame.pack(pady=10)
+        # 左右回転ボタン
+        rotation_frame = ttk.Frame(left_frame)
+        rotation_frame.pack(pady=10)
 
         ttk.Button(
-            middle_frame,
-            text="左\n←",
+            rotation_frame,
+            text="左回転",
             width=10,
-            command=lambda: self.send_direction_command(roll=-10),
-        ).pack(side=tk.LEFT, padx=20)
+            command=lambda: self.send_direction_command("LEFT"),
+        ).pack(side=tk.LEFT, padx=5)
         ttk.Button(
-            middle_frame,
-            text="右\n→",
+            rotation_frame,
+            text="右回転",
             width=10,
-            command=lambda: self.send_direction_command(roll=10),
-        ).pack(side=tk.LEFT, padx=20)
+            command=lambda: self.send_direction_command("RIGHT"),
+        ).pack(side=tk.LEFT, padx=5)
 
+        # 下降ボタン
         ttk.Button(
-            direction_frame,
-            text="後退\n↓",
+            left_frame,
+            text="下降",
             width=10,
-            command=lambda: self.send_direction_command(pitch=-10),
+            command=lambda: self.send_direction_command("DOWN"),
         ).pack(pady=5)
 
-        # 回転制御
-        rotation_frame = ttk.LabelFrame(self.root, text="回転制御", padding="10")
-        rotation_frame.pack(fill=tk.X, padx=10, pady=10)
+        # 右側フレーム（前進・後退）
+        right_frame = ttk.LabelFrame(main_layout_frame, text="前後移動", padding="5")
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
 
-        rotation_button_frame = ttk.Frame(rotation_frame)
-        rotation_button_frame.pack()
-
+        # 前後移動ボタンを縦に配置
         ttk.Button(
-            rotation_button_frame,
-            text="↺ 左回転",
-            width=15,
-            command=lambda: self.send_direction_command(yaw=-10),
-        ).pack(side=tk.LEFT, padx=10)
+            right_frame,
+            text="前進",
+            width=10,
+            command=lambda: self.send_direction_command("FWD"),
+        ).pack(pady=20)
         ttk.Button(
-            rotation_button_frame,
-            text="↻ 右回転",
-            width=15,
-            command=lambda: self.send_direction_command(yaw=10),
-        ).pack(side=tk.LEFT, padx=10)
+            right_frame,
+            text="並行",
+            width=10,
+            command=lambda: self.send_direction_command("PARALEL"),
+        ).pack(pady=20) 
+        ttk.Button(
+            right_frame,
+            text="後退",
+            width=10,
+            command=lambda: self.send_direction_command("BACK"),
+        ).pack(pady=20)
+        
 
         # 緊急停止
         ttk.Button(
@@ -315,27 +393,60 @@ class DroneControllerGUI:
         """ドローンを停止"""
         self.controller.send_stop_command()
 
-    def send_direction_command(self, pitch=0, roll=0, yaw=0):
+
+    def send_direction_command(self, command: str = None):
         """方向コマンド送信"""
         if not self.controller.connected:
             messagebox.showwarning("警告", "デバイスが接続されていません")
             return
 
-        self.controller.send_command(pitch=pitch, roll=roll, yaw=yaw)
+        self.controller.send_command(command)
 
-    def update_throttle(self, value):
-        """スロットル更新"""
-        throttle = int(float(value))
-        self.throttle_label.config(text=f"{throttle}%")
-
-        if self.controller.connected:
-            self.controller.send_command(throttle=throttle)
+    def send_parameter(self, param_name):
+        """個別パラメータ送信"""
+        if not self.controller.connected:
+            messagebox.showwarning("警告", "デバイスが接続されていません")
+            return
+        
+        param_info = self.parameters[param_name]
+        value = self.param_vars[param_name].get()
+        
+        # 範囲チェック
+        if value < param_info['min'] or value > param_info['max']:
+            messagebox.showerror("エラー", 
+                f"{param_info['label']}は{param_info['min']}から{param_info['max']}の範囲で入力してください")
+            return
+        
+        if self.controller.send_parameter(param_name, value):
+            messagebox.showinfo("成功", f"{param_info['label']}を{value}に設定しました")
+    
+    def send_all_parameters(self):
+        """全パラメータ送信"""
+        if not self.controller.connected:
+            messagebox.showwarning("警告", "デバイスが接続されていません")
+            return
+        
+        for param_name in self.parameters:
+            param_info = self.parameters[param_name]
+            value = self.param_vars[param_name].get()
+            
+            # 範囲チェック
+            if value < param_info['min'] or value > param_info['max']:
+                messagebox.showerror("エラー", 
+                    f"{param_info['label']}は{param_info['min']}から{param_info['max']}の範囲で入力してください")
+                return
+        
+        # 全パラメータ送信
+        for param_name in self.parameters:
+            value = self.param_vars[param_name].get()
+            self.controller.send_parameter(param_name, value)
+        
+        messagebox.showinfo("成功", "全パラメータを送信しました")
 
     def emergency_stop(self):
         """緊急停止"""
-        self.throttle_var.set(0)
         if self.controller.connected:
-            self.controller.send_command(throttle=0)
+            self.controller.send_stop_command()
             messagebox.showinfo("緊急停止", "モーターを停止しました")
 
     def on_connection_result(self, success):
@@ -354,7 +465,6 @@ class DroneControllerGUI:
         self.connection_label.config(text="未接続", foreground="black")
         self.connect_button.config(state=tk.NORMAL)
         self.disconnect_button.config(state=tk.DISABLED)
-        self.throttle_var.set(0)
 
     def update_status(self):
         """ステータス更新"""
