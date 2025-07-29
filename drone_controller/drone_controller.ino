@@ -15,7 +15,7 @@
 #define SLAVE_ADDR 0x08
 #define ESC_MIN    1000
 #define ESC_MAX    2000
-#define HOVER_THR  1450          // ホバリング推力
+#define HOVER_THR  1100          // ホバリング推力
 #define LAND_THR   1250          // 降下推力
 #define DELTA_XY   10
 #define DELTA_Z    10
@@ -49,6 +49,9 @@ PIDController yaw_pid   = {1.5, 0.05, 0.3, 0, 0, 0, 0};
 float roll_angle = 0, pitch_angle = 0, yaw_rate = 0;
 bool pid_enabled = false;
 unsigned long last_pid_time = 0;
+
+// ESC個別調整用オフセット
+int16_t esc_offset[4] = {5, 5, 20, -85};  // 各ESCの補正値
 
 
 char buf[40];  byte idx = 0;
@@ -141,11 +144,15 @@ void applyPIDControl() {
 /* ---------- 低レベル ---------- */
 void writeNow() {
  for (byte i = 0; i < 4; i++) {
-   uint16_t pw = constrain(pwm[i], ESC_MIN, ESC_MAX);
+   uint16_t pw = constrain(pwm[i] + esc_offset[i], ESC_MIN, ESC_MAX);
    esc[i].writeMicroseconds(pw);
-   pwm[i] = pw;
+   pwm[i] = pw - esc_offset[i];  // 元の値を保持
    Serial.print("ESC"); Serial.print(i);
-   Serial.print("="); Serial.print(pw); Serial.print("\n");
+   Serial.print("="); Serial.print(pw);
+   if (esc_offset[i] != 0) {
+     Serial.print("("); Serial.print(pwm[i]); Serial.print("+"); Serial.print(esc_offset[i]); Serial.print(")");
+   }
+   Serial.print("\n");
  }
 }
 
@@ -167,8 +174,6 @@ void rampTo(uint16_t tgt) {
        done = false;
      } else if (pwm[i] > tgt) {
        pwm[i] = (pwm[i] < tgt + RAMP_STEP) ? tgt : pwm[i] - RAMP_STEP;
-
-
        done = false;
      }
    }
@@ -216,7 +221,37 @@ void applyCmd(const char *cmd) {
  else if (!strcmp(cmd,"PALALEL")){for(byte i=0;i<4;i++) pwm[i]=HOVER_THR;}
  else if (!strcmp(cmd,"PID_ON")) {pid_enabled = true; last_pid_time = millis();}
  else if (!strcmp(cmd,"PID_OFF")) {pid_enabled = false;}
+ 
+ /* ESC個別テスト ---------------------------------------------------- */
+ else if (!strcmp(cmd,"TEST0")) {stopAll(); pwm[0]=HOVER_THR;}  // ESC0のみテスト
+ else if (!strcmp(cmd,"TEST1")) {stopAll(); pwm[1]=HOVER_THR;}  // ESC1のみテスト
+ else if (!strcmp(cmd,"TEST2")) {stopAll(); pwm[2]=HOVER_THR;}  // ESC2のみテスト
+ else if (!strcmp(cmd,"TEST3")) {stopAll(); pwm[3]=HOVER_THR;}  // ESC3のみテスト
 
+
+ /* ESCオフセット調整 ----------------------------------------------- */
+ else if (strncmp(cmd, "OFFSET", 6) == 0) {
+   int esc_num, offset_val;
+   if (sscanf(cmd, "OFFSET%d %d", &esc_num, &offset_val) == 2) {
+     if (esc_num >= 0 && esc_num <= 3) {
+       esc_offset[esc_num] = constrain(offset_val, -200, 200);
+       Serial.print("ESC"); Serial.print(esc_num); 
+       Serial.print(" offset = "); Serial.println(esc_offset[esc_num]);
+     }
+   }
+   return;
+ }
+ 
+ /* 設定表示 --------------------------------------------------------- */
+ else if (!strcmp(cmd,"STATUS")) {
+   Serial.println("=== ESC Status ===");
+   for (byte i = 0; i < 4; i++) {
+     Serial.print("ESC"); Serial.print(i); Serial.print(": PWM="); 
+     Serial.print(pwm[i]); Serial.print(", Offset="); Serial.println(esc_offset[i]);
+   }
+   Serial.print("PID: "); Serial.println(pid_enabled ? "ON" : "OFF");
+   return;
+ }
 
  /* 任意 4 値 --------------------------------------------------------- */
  else {

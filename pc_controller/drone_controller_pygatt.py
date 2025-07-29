@@ -284,7 +284,83 @@ class DroneControllerGUI:
         # 全パラメータ送信ボタン
         ttk.Button(parameter_frame, text="全パラメータを送信", 
                   command=self.send_all_parameters).pack(pady=5)
-
+        
+        # ESCテスト・調整フレーム
+        esc_test_frame = ttk.LabelFrame(self.root, text="ESCテスト・調整", padding="5")
+        esc_test_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # ESC個別テストボタン
+        test_buttons_frame = ttk.Frame(esc_test_frame)
+        test_buttons_frame.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(test_buttons_frame, text="個別テスト:").pack(side=tk.LEFT, padx=5)
+        
+        for i in range(4):
+            ttk.Button(
+                test_buttons_frame,
+                text=f"TEST{i}",
+                command=lambda x=i: self.send_test_command(x),
+                width=8
+            ).pack(side=tk.LEFT, padx=2)
+        
+        ttk.Button(
+            test_buttons_frame,
+            text="STATUS",
+            command=lambda: self.send_command("STATUS"),
+            width=8
+        ).pack(side=tk.LEFT, padx=2)
+        
+        # ESCオフセット調整
+        offset_frame = ttk.Frame(esc_test_frame)
+        offset_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(offset_frame, text="オフセット調整:").pack(side=tk.LEFT, padx=5)
+        
+        # ESC選択とオフセット値入力
+        self.selected_esc = tk.IntVar(value=0)
+        self.offset_value = tk.IntVar(value=0)
+        
+        esc_select_frame = ttk.Frame(offset_frame)
+        esc_select_frame.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Label(esc_select_frame, text="ESC:").pack(side=tk.LEFT)
+        for i in range(4):
+            ttk.Radiobutton(
+                esc_select_frame,
+                text=str(i),
+                variable=self.selected_esc,
+                value=i
+            ).pack(side=tk.LEFT)
+        
+        ttk.Label(offset_frame, text="値:").pack(side=tk.LEFT, padx=(10,2))
+        offset_entry = ttk.Entry(offset_frame, textvariable=self.offset_value, width=6)
+        offset_entry.pack(side=tk.LEFT, padx=2)
+        
+        ttk.Button(
+            offset_frame,
+            text="設定",
+            command=self.send_offset_command,
+            width=8
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # ホバーオフセット値入力
+        hover_offset_frame = ttk.Frame(esc_test_frame)
+        hover_offset_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(hover_offset_frame, text="ホバーオフセット値:").pack(side=tk.LEFT, padx=5)
+        
+        hover_offset_value = tk.IntVar(value=0)
+        self.hover_offset_value = hover_offset_value
+        hover_offset_entry = ttk.Entry(hover_offset_frame, textvariable=hover_offset_value, width=6)
+        hover_offset_entry.pack(side=tk.LEFT, padx=2)
+        
+        ttk.Button(
+            hover_offset_frame,
+            text="設定",
+            command=self.send_hover_offset_command,
+            width=8
+        ).pack(side=tk.LEFT, padx=5)
+        
         # 方向制御
         direction_frame = ttk.LabelFrame(self.root, text="方向制御", padding="10")
         direction_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -442,6 +518,46 @@ class DroneControllerGUI:
             self.controller.send_parameter(param_name, value)
         
         messagebox.showinfo("成功", "全パラメータを送信しました")
+
+    def send_test_command(self, esc_num):
+        """ESC個別テストコマンド送信"""
+        if not self.controller.connected:
+            messagebox.showwarning("警告", "デバイスが接続されていません")
+            return
+        
+        command = f"TEST{esc_num}"
+        self.controller.send_command(command)
+        messagebox.showinfo("テスト", f"ESC{esc_num}の個別テストを開始しました")
+
+    def send_offset_command(self):
+        """ESCオフセット調整コマンド送信"""
+        if not self.controller.connected:
+            messagebox.showwarning("警告", "デバイスが接続されていません")
+            return
+        
+        esc_num = self.selected_esc.get()
+        offset_val = self.offset_value.get()
+        
+        # 範囲チェック
+        if offset_val < -200 or offset_val > 200:
+            messagebox.showerror("エラー", "オフセット値は-200から200の範囲で入力してください")
+            return
+        
+        command = f"OFFSET{esc_num} {offset_val}"
+        self.controller.send_command(command)
+        messagebox.showinfo("設定完了", f"ESC{esc_num}のオフセットを{offset_val}に設定しました")
+
+    def send_hover_offset_command(self):
+        """ホバーオフセット値送信"""
+        if not self.controller.connected:
+            messagebox.showwarning("警告", "デバイスが接続されていません")
+            return
+        
+        hover_offset_val = self.hover_offset_value.get()
+        
+        command = f"HOVER_OFFSET {hover_offset_val}"
+        self.controller.send_command(command)
+        messagebox.showinfo("設定完了", f"ホバーオフセットを{hover_offset_val}に設定しました")
 
     def emergency_stop(self):
         """緊急停止"""
