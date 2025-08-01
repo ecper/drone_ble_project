@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # BLE設定
-DEVICE_ADDRESS = "D8:3A:DD:EE:48:0D"
+DEVICE_ADDRESS = "2C:CF:67:F5:0B:E0"
 COMMAND_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 STATUS_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 
@@ -215,76 +215,7 @@ class DroneControllerGUI:
             command=self.stop_drone,
             width=20,
         ).pack(side=tk.LEFT, padx=5)
-        
-        # パラメータ設定（折りたたみ可能）
-        parameter_frame = ttk.LabelFrame(self.root, text="パラメータ設定", padding="5")
-        parameter_frame.pack(fill=tk.X, padx=10, pady=5)
-        
-        # パラメータ定義
-        self.parameters = {
-            'ESC_MIN': {'label': 'ESC最小値', 'default': 1000, 'min': 900, 'max': 1200},
-            'ESC_MAX': {'label': 'ESC最大値', 'default': 2000, 'min': 1800, 'max': 2100},
-            'HOVER_THR': {'label': 'ホバリングスロットル', 'default': 1500, 'min': 1200, 'max': 1800},
-            'LAND_THR': {'label': '着陸スロットル', 'default': 1300, 'min': 1000, 'max': 1500},
-            'DELTA_XY': {'label': 'XY移動量', 'default': 50, 'min': 10, 'max': 200},
-            'DELTA_Z': {'label': 'Z移動量', 'default': 30, 'min': 10, 'max': 100}
-        }
-        
-        # パラメータ入力フィールドを作成（2列配置）
-        self.param_vars = {}
-        self.param_entries = {}
-        
-        # 2列のフレーム作成
-        params_list = list(self.parameters.items())
-        
-        for i in range(0, len(params_list), 2):
-            row_frame = ttk.Frame(parameter_frame)
-            row_frame.pack(fill=tk.X, pady=2)
-            
-            # 左列
-            if i < len(params_list):
-                param_name, param_info = params_list[i]
-                col_frame = ttk.Frame(row_frame)
-                col_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
-                
-                ttk.Label(col_frame, text=f"{param_info['label']}:", width=15).pack(side=tk.LEFT)
-                
-                var = tk.IntVar(value=param_info['default'])
-                self.param_vars[param_name] = var
-                
-                entry = ttk.Entry(col_frame, textvariable=var, width=8)
-                entry.pack(side=tk.LEFT, padx=2)
-                self.param_entries[param_name] = entry
-                
-                ttk.Label(col_frame, text=f"({param_info['min']}-{param_info['max']})", font=("Arial", 8)).pack(side=tk.LEFT)
-                
-                ttk.Button(col_frame, text="設定", width=6,
-                          command=lambda pn=param_name: self.send_parameter(pn)).pack(side=tk.LEFT, padx=2)
-            
-            # 右列
-            if i + 1 < len(params_list):
-                param_name, param_info = params_list[i + 1]
-                col_frame = ttk.Frame(row_frame)
-                col_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 0))
-                
-                ttk.Label(col_frame, text=f"{param_info['label']}:", width=15).pack(side=tk.LEFT)
-                
-                var = tk.IntVar(value=param_info['default'])
-                self.param_vars[param_name] = var
-                
-                entry = ttk.Entry(col_frame, textvariable=var, width=8)
-                entry.pack(side=tk.LEFT, padx=2)
-                self.param_entries[param_name] = entry
-                
-                ttk.Label(col_frame, text=f"({param_info['min']}-{param_info['max']})", font=("Arial", 8)).pack(side=tk.LEFT)
-                
-                ttk.Button(col_frame, text="設定", width=6,
-                          command=lambda pn=param_name: self.send_parameter(pn)).pack(side=tk.LEFT, padx=2)
-        
-        # 全パラメータ送信ボタン
-        ttk.Button(parameter_frame, text="全パラメータを送信", 
-                  command=self.send_all_parameters).pack(pady=5)
-        
+
         # ESCテスト・調整フレーム
         esc_test_frame = ttk.LabelFrame(self.root, text="ESCテスト・調整", padding="5")
         esc_test_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -340,24 +271,6 @@ class DroneControllerGUI:
             offset_frame,
             text="設定",
             command=self.send_offset_command,
-            width=8
-        ).pack(side=tk.LEFT, padx=5)
-        
-        # ホバーオフセット値入力
-        hover_offset_frame = ttk.Frame(esc_test_frame)
-        hover_offset_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(hover_offset_frame, text="ホバーオフセット値:").pack(side=tk.LEFT, padx=5)
-        
-        hover_offset_value = tk.IntVar(value=0)
-        self.hover_offset_value = hover_offset_value
-        hover_offset_entry = ttk.Entry(hover_offset_frame, textvariable=hover_offset_value, width=6)
-        hover_offset_entry.pack(side=tk.LEFT, padx=2)
-        
-        ttk.Button(
-            hover_offset_frame,
-            text="設定",
-            command=self.send_hover_offset_command,
             width=8
         ).pack(side=tk.LEFT, padx=5)
         
@@ -478,47 +391,6 @@ class DroneControllerGUI:
 
         self.controller.send_command(command)
 
-    def send_parameter(self, param_name):
-        """個別パラメータ送信"""
-        if not self.controller.connected:
-            messagebox.showwarning("警告", "デバイスが接続されていません")
-            return
-        
-        param_info = self.parameters[param_name]
-        value = self.param_vars[param_name].get()
-        
-        # 範囲チェック
-        if value < param_info['min'] or value > param_info['max']:
-            messagebox.showerror("エラー", 
-                f"{param_info['label']}は{param_info['min']}から{param_info['max']}の範囲で入力してください")
-            return
-        
-        if self.controller.send_parameter(param_name, value):
-            messagebox.showinfo("成功", f"{param_info['label']}を{value}に設定しました")
-    
-    def send_all_parameters(self):
-        """全パラメータ送信"""
-        if not self.controller.connected:
-            messagebox.showwarning("警告", "デバイスが接続されていません")
-            return
-        
-        for param_name in self.parameters:
-            param_info = self.parameters[param_name]
-            value = self.param_vars[param_name].get()
-            
-            # 範囲チェック
-            if value < param_info['min'] or value > param_info['max']:
-                messagebox.showerror("エラー", 
-                    f"{param_info['label']}は{param_info['min']}から{param_info['max']}の範囲で入力してください")
-                return
-        
-        # 全パラメータ送信
-        for param_name in self.parameters:
-            value = self.param_vars[param_name].get()
-            self.controller.send_parameter(param_name, value)
-        
-        messagebox.showinfo("成功", "全パラメータを送信しました")
-
     def send_test_command(self, esc_num):
         """ESC個別テストコマンド送信"""
         if not self.controller.connected:
@@ -546,18 +418,6 @@ class DroneControllerGUI:
         command = f"OFFSET{esc_num} {offset_val}"
         self.controller.send_command(command)
         messagebox.showinfo("設定完了", f"ESC{esc_num}のオフセットを{offset_val}に設定しました")
-
-    def send_hover_offset_command(self):
-        """ホバーオフセット値送信"""
-        if not self.controller.connected:
-            messagebox.showwarning("警告", "デバイスが接続されていません")
-            return
-        
-        hover_offset_val = self.hover_offset_value.get()
-        
-        command = f"HOVER_OFFSET {hover_offset_val}"
-        self.controller.send_command(command)
-        messagebox.showinfo("設定完了", f"ホバーオフセットを{hover_offset_val}に設定しました")
 
     def emergency_stop(self):
         """緊急停止"""

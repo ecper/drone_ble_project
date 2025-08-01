@@ -24,7 +24,10 @@
 
 // PID制御パラメータ
 #define PID_RATE   20            // PID制御周期 (ms)
-#define MAX_CORRECTION 100       // 最大PID補正値 (µs)
+#define MAX_CORRECTION 150       // 最大PID補正値 (µs)
+#define ANGLE_DEADBAND 5.0       // 角度不感帯 (度) - これ以下の傾きは無視
+#define MIN_CORRECTION 30        // 最小補正値 (µs) - これ以下の補正は0に
+#define ANGLE_STOP_MOTOR 15.0    // モーター停止角度 (度) - これ以上傾いたらモーター停止
 
 // PID構造体
 struct PIDController {
@@ -40,10 +43,10 @@ LSM6DS3 imu(I2C_MODE, 0x6A);
 Servo esc[4];
 const uint8_t escPin[4] = {0, 1, 2, 3};
 
-// PIDコントローラー
-PIDController roll_pid  = {2.0, 0.1, 0.5, 0, 0, 0, 0};
-PIDController pitch_pid = {2.0, 0.1, 0.5, 0, 0, 0, 0};
-PIDController yaw_pid   = {1.5, 0.05, 0.3, 0, 0, 0, 0};
+// PIDコントローラー（15度でモーター停止するよう調整）
+PIDController roll_pid  = {10.0, 0.0, 2.0, 0, 0, 0, 0};   // 角度に対して強く反応
+PIDController pitch_pid = {10.0, 0.0, 2.0, 0, 0, 0, 0};  // 積分項は0に（振動防止）
+PIDController yaw_pid   = {3.0, 0.1, 0.8, 0, 0, 0, 0};
 
 // 姿勢データ
 float roll_angle = 0, pitch_angle = 0, yaw_rate = 0;
@@ -106,10 +109,19 @@ void applyPIDControl() {
   
   readIMU();
   
+  // 不感帯処理 - 小さな角度は無視
+  if (abs(roll_angle) < ANGLE_DEADBAND) roll_angle = 0;
+  if (abs(pitch_angle) < ANGLE_DEADBAND) pitch_angle = 0;
+  
   // PID計算
   float roll_correction = calculatePID(&roll_pid, roll_angle, dt);
   float pitch_correction = calculatePID(&pitch_pid, pitch_angle, dt);
   float yaw_correction = calculatePID(&yaw_pid, yaw_rate, dt);
+  
+  // 最小補正値処理 - 小さすぎる補正は0に
+  if (abs(roll_correction) < MIN_CORRECTION) roll_correction = 0;
+  if (abs(pitch_correction) < MIN_CORRECTION) pitch_correction = 0;
+  if (abs(yaw_correction) < MIN_CORRECTION) yaw_correction = 0;
   
   // モーター配置：
   // 0: 前左, 1: 前右, 2: 後左, 3: 後右
@@ -122,16 +134,16 @@ void applyPIDControl() {
   motor_correction[3] = +roll_correction; // 後右
   
   // Pitch制御（前後傾き）
-  motor_correction[0] += -pitch_correction; // 前左
+  motor_correction[0] += +pitch_correction; // 前左
   motor_correction[1] += -pitch_correction; // 前右
-  motor_correction[2] += +pitch_correction; // 後左
+  motor_correction[2] += -pitch_correction; // 後左
   motor_correction[3] += +pitch_correction; // 後右
   
   // Yaw制御（回転）
-  motor_correction[0] += +yaw_correction; // 前左
-  motor_correction[1] += -yaw_correction; // 前右
-  motor_correction[2] += -yaw_correction; // 後左
-  motor_correction[3] += +yaw_correction; // 後右
+  motor_correction[0] += -yaw_correction; // 前左
+  motor_correction[1] += +yaw_correction; // 前右
+  motor_correction[2] += +yaw_correction; // 後左
+  motor_correction[3] += -yaw_correction; // 後右
   
   // PWM値に補正を適用
   for (byte i = 0; i < 4; i++) {
