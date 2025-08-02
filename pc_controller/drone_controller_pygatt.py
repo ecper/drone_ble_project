@@ -149,7 +149,7 @@ class DroneControllerGUI:
         self.controller = DroneController()
         self.root = tk.Tk()
         self.root.title("ドローンコントローラー (pygatt)")
-        self.root.geometry("700x1100")
+        self.root.geometry("700x1200")
 
         self.setup_ui()
         self.update_status()
@@ -417,6 +417,34 @@ class DroneControllerGUI:
         ttk.Entry(yaw_frame, textvariable=self.yaw_kd, width=6).pack(side=tk.LEFT, padx=2)
         ttk.Button(yaw_frame, text="設定", command=lambda: self.set_pid_params("YAW"), width=6).pack(side=tk.LEFT, padx=5)
         
+        # 簡単調整ボタン
+        quick_adjust_frame = ttk.LabelFrame(pid_frame, text="簡単調整", padding="5")
+        quick_adjust_frame.pack(fill=tk.X, pady=5)
+        
+        quick_buttons_frame = ttk.Frame(quick_adjust_frame)
+        quick_buttons_frame.pack(fill=tk.X, pady=2)
+        
+        ttk.Button(
+            quick_buttons_frame,
+            text="穏やか",
+            command=lambda: self.send_command("PID_GENTLE"),
+            width=8
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            quick_buttons_frame,
+            text="標準",
+            command=lambda: self.send_command("PID_NORMAL"),
+            width=8
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            quick_buttons_frame,
+            text="積極的",
+            command=lambda: self.send_command("PID_AGGRESSIVE"),
+            width=8
+        ).pack(side=tk.LEFT, padx=5)
+        
         # その他のパラメータ
         other_params_frame = ttk.LabelFrame(pid_frame, text="その他のパラメータ", padding="5")
         other_params_frame.pack(fill=tk.X, pady=5)
@@ -441,9 +469,33 @@ class DroneControllerGUI:
         max_corr_frame = ttk.Frame(other_params_frame)
         max_corr_frame.pack(fill=tk.X, pady=2)
         ttk.Label(max_corr_frame, text="最大補正値(µs):").pack(side=tk.LEFT, padx=5)
-        self.max_correction = tk.IntVar(value=150)
+        self.max_correction = tk.IntVar(value=100)
         ttk.Entry(max_corr_frame, textvariable=self.max_correction, width=6).pack(side=tk.LEFT, padx=2)
         ttk.Button(max_corr_frame, text="設定", command=lambda: self.set_param("MAX_CORR", self.max_correction.get()), width=6).pack(side=tk.LEFT, padx=5)
+        
+        # PIDスケール係数設定
+        scale_frame = ttk.Frame(other_params_frame)
+        scale_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(scale_frame, text="PIDスケール:").pack(side=tk.LEFT, padx=5)
+        self.pid_scale = tk.DoubleVar(value=0.01)
+        ttk.Entry(scale_frame, textvariable=self.pid_scale, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Button(scale_frame, text="設定", command=lambda: self.set_param("SCALE", self.pid_scale.get()), width=6).pack(side=tk.LEFT, padx=5)
+        
+        # 最小モーター出力設定
+        min_out_frame = ttk.Frame(other_params_frame)
+        min_out_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(min_out_frame, text="最小出力(µs):").pack(side=tk.LEFT, padx=5)
+        self.min_motor_output = tk.IntVar(value=50)
+        ttk.Entry(min_out_frame, textvariable=self.min_motor_output, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Button(min_out_frame, text="設定", command=lambda: self.set_param("MIN_OUT", self.min_motor_output.get()), width=6).pack(side=tk.LEFT, padx=5)
+        
+        # ベース推力設定
+        base_thr_frame = ttk.Frame(other_params_frame)
+        base_thr_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(base_thr_frame, text="ベース推力:").pack(side=tk.LEFT, padx=5)
+        self.base_throttle = tk.IntVar(value=1250)
+        ttk.Entry(base_thr_frame, textvariable=self.base_throttle, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Button(base_thr_frame, text="設定", command=lambda: self.set_param("BASE_THR", self.base_throttle.get()), width=6).pack(side=tk.LEFT, padx=5)
         
         # 緊急停止
         ttk.Button(
