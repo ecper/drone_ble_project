@@ -8,6 +8,8 @@ from gi.repository import GLib
 import sys
 import logging
 import time
+import base64
+import binascii
 
 # I2Cライブラリをインポート
 try:
@@ -268,9 +270,21 @@ class CommandCharacteristic(Characteristic):
                 GLib.idle_add(send_status_notification, "ERR:Empty_CMD")
                 return
             
-            # UTF-8デコード試行
-            command_str = bytes(value).decode('utf-8').strip()
-            logger.info(f"Received BLE command: '{command_str}'")
+            # Base64デコード試行
+            try:
+                # まず生のバイトデータをUTF-8文字列として取得
+                base64_str = bytes(value).decode('utf-8').strip()
+                logger.info(f"Received Base64 string: '{base64_str}'")
+                
+                # Base64デコード
+                decoded_bytes = base64.b64decode(base64_str)
+                command_str = decoded_bytes.decode('utf-8').strip()
+                logger.info(f"Decoded command: '{command_str}'")
+            except (binascii.Error, ValueError) as b64_err:
+                logger.warning(f"Base64 decode failed: {b64_err}, trying direct UTF-8 decode")
+                # Base64デコードに失敗した場合は、直接UTF-8デコードを試みる（互換性のため）
+                command_str = bytes(value).decode('utf-8').strip()
+                logger.info(f"Direct decoded command: '{command_str}'")
 
             # 空文字列チェック
             if not command_str:
