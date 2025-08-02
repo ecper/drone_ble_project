@@ -64,6 +64,24 @@ uint16_t pwm[4] = {ESC_MIN, ESC_MIN, ESC_MIN, ESC_MIN}; // 常に現在値を保
 
 
 
+/* ---------- PIDリセット ---------- */
+void resetPID() {
+  // 目標角度を0に
+  roll_pid.setpoint = 0.0;
+  pitch_pid.setpoint = 0.0;
+  yaw_pid.setpoint = 0.0;
+  
+  // 積分項をリセット
+  roll_pid.integral = 0.0;
+  pitch_pid.integral = 0.0;
+  yaw_pid.integral = 0.0;
+  
+  // 前回のエラーもリセット
+  roll_pid.previous_error = 0.0;
+  pitch_pid.previous_error = 0.0;
+  yaw_pid.previous_error = 0.0;
+}
+
 /* ---------- IMU読み取り ---------- */
 void readIMU() {
   float ax = imu.readFloatAccelX();
@@ -146,9 +164,17 @@ void applyPIDControl() {
   motor_correction[2] += +yaw_correction; // BR
   motor_correction[3] += -yaw_correction; // FL
   
-  // PWM値に補正を適用
+  // PID補正を適用
+  // 注意: PID制御時は現在のpwm値に補正を加える（初期値ESC_MINからではなく）
+  // 各モーターの現在値を一時保存
+  uint16_t current_pwm[4];
   for (byte i = 0; i < 4; i++) {
-    pwm[i] = constrain(pwm[i] + motor_correction[i], ESC_MIN, ESC_MAX);
+    current_pwm[i] = pwm[i];
+  }
+  
+  // 現在のpwm値にPID補正を適用
+  for (byte i = 0; i < 4; i++) {
+    pwm[i] = constrain(current_pwm[i] + motor_correction[i], ESC_MIN, ESC_MAX);
   }
   
   writeNow();
@@ -206,6 +232,7 @@ void applyCmd(const char *cmd) {
    landing = false;
    pid_enabled = true;         // PID制御開始
    last_pid_time = millis();
+   resetPID();                 // PIDパラメータを初期化
    return;
  }
 
@@ -213,6 +240,10 @@ void applyCmd(const char *cmd) {
  /* STOP --------------------------------------------------------------- */
  if (!strcmp(cmd, "STOP")) {
    pid_enabled = false;        // まずPID制御を停止
+   // 目標角度をリセット
+   roll_pid.setpoint = 0.0;
+   pitch_pid.setpoint = 0.0;
+   yaw_pid.setpoint = 0.0;
    if (!landing) {             // 1 回目：降下推力で保持
      rampTo(LAND_THR);
      landing = true;
@@ -235,15 +266,73 @@ void applyCmd(const char *cmd) {
 
 
  /* 方向 / 上下 -------------------------------------------------------- */
- if      (!strcmp(cmd,"FWD"))  {pwm[0]-=DELTA_XY; pwm[1]-=DELTA_XY; pwm[2]+=DELTA_XY; pwm[3]+=DELTA_XY;}
- else if (!strcmp(cmd,"BACK")) {pwm[0]+=DELTA_XY; pwm[1]+=DELTA_XY; pwm[2]-=DELTA_XY; pwm[3]-=DELTA_XY;}
- else if (!strcmp(cmd,"LEFT")) {pwm[0]-=DELTA_XY; pwm[1]+=DELTA_XY; pwm[2]-=DELTA_XY; pwm[3]+=DELTA_XY;}
- else if (!strcmp(cmd,"RIGHT")){pwm[0]+=DELTA_XY; pwm[1]-=DELTA_XY; pwm[2]+=DELTA_XY; pwm[3]-=DELTA_XY;}
- else if (!strcmp(cmd,"UP"))   {for(byte i=0;i<4;i++) pwm[i]+=DELTA_Z;}
- else if (!strcmp(cmd,"DOWN")) {for(byte i=0;i<4;i++) pwm[i]-=DELTA_Z;}
- else if (!strcmp(cmd,"PALALEL")){for(byte i=0;i<4;i++) pwm[i]=HOVER_THR;}
- else if (!strcmp(cmd,"PID_ON")) {pid_enabled = true; last_pid_time = millis();}
- else if (!strcmp(cmd,"PID_OFF")) {pid_enabled = false;}
+ if (!strcmp(cmd,"FWD"))  {
+   if (pid_enabled) {
+     // PID制御時：目標角度を設定（前進は機首を下げる）
+     pitch_pid.setpoint = -5.0;  // -5度
+   } else {
+     // 通常制御時：PWM値を直接調整
+     pwm[0]-=DELTA_XY; pwm[1]-=DELTA_XY; pwm[2]+=DELTA_XY; pwm[3]+=DELTA_XY;
+   }
+ }
+ else if (!strcmp(cmd,"BACK")) {
+   if (pid_enabled) {
+     // PID制御時：目標角度を設定（後退は機首を上げる）
+     pitch_pid.setpoint = 5.0;   // +5度
+   } else {
+     // 通常制御時：PWM値を直接調整
+     pwm[0]+=DELTA_XY; pwm[1]+=DELTA_XY; pwm[2]-=DELTA_XY; pwm[3]-=DELTA_XY;
+   }
+ }
+ else if (!strcmp(cmd,"LEFT")) {
+   if (pid_enabled) {
+     // PID制御時：目標角度を設定（左移動は右に傾ける）
+     roll_pid.setpoint = 5.0;    // +5度
+   } else {
+     // 通常制御時：PWM値を直接調整
+     pwm[0]-=DELTA_XY; pwm[1]+=DELTA_XY; pwm[2]-=DELTA_XY; pwm[3]+=DELTA_XY;
+   }
+ }
+ else if (!strcmp(cmd,"RIGHT")){
+   if (pid_enabled) {
+     // PID制御時：目標角度を設定（右移動は左に傾ける）
+     roll_pid.setpoint = -5.0;   // -5度
+   } else {
+     // 通常制御時：PWM値を直接調整
+     pwm[0]+=DELTA_XY; pwm[1]-=DELTA_XY; pwm[2]+=DELTA_XY; pwm[3]-=DELTA_XY;
+   }
+ }
+ else if (!strcmp(cmd,"UP"))   {
+   // 上昇：PID制御の有無に関わらず全体の推力を増加
+   for(byte i=0;i<4;i++) pwm[i]+=DELTA_Z;
+ }
+ else if (!strcmp(cmd,"DOWN")) {
+   // 下降：PID制御の有無に関わらず全体の推力を減少
+   for(byte i=0;i<4;i++) pwm[i]-=DELTA_Z;
+ }
+ else if (!strcmp(cmd,"PALALEL")){
+   if (pid_enabled) {
+     // PID制御時：目標角度を水平（0度）に戻す
+     roll_pid.setpoint = 0.0;
+     pitch_pid.setpoint = 0.0;
+     yaw_pid.setpoint = 0.0;
+   } else {
+     // 通常制御時：全モーターをホバリング推力に
+     for(byte i=0;i<4;i++) pwm[i]=HOVER_THR;
+   }
+ }
+ else if (!strcmp(cmd,"PID_ON")) {
+   pid_enabled = true; 
+   last_pid_time = millis();
+   resetPID();  // PIDパラメータを初期化
+ }
+ else if (!strcmp(cmd,"PID_OFF")) {
+   pid_enabled = false;
+   // 目標角度のみリセット（積分項は保持）
+   roll_pid.setpoint = 0.0;
+   pitch_pid.setpoint = 0.0;
+   yaw_pid.setpoint = 0.0;
+ }
  
  /* ESC個別テスト ---------------------------------------------------- */
 else if (!strcmp(cmd,"TEST0")) {
@@ -370,6 +459,10 @@ else if (!strcmp(cmd,"TEST0")) {
    Serial.print("Yaw: Kp="); Serial.print(yaw_pid.kp);
    Serial.print(" Ki="); Serial.print(yaw_pid.ki);
    Serial.print(" Kd="); Serial.println(yaw_pid.kd);
+   Serial.println("=== Target Angles ===");
+   Serial.print("Roll Target: "); Serial.print(roll_pid.setpoint); Serial.println(" deg");
+   Serial.print("Pitch Target: "); Serial.print(pitch_pid.setpoint); Serial.println(" deg");
+   Serial.print("Yaw Target: "); Serial.print(yaw_pid.setpoint); Serial.println(" deg/s");
    Serial.println("=== Other Parameters ===");
    Serial.print("Angle Deadband: "); Serial.print(angle_deadband); Serial.println(" deg");
    Serial.print("Min Correction: "); Serial.print(min_correction); Serial.println(" us");
