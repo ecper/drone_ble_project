@@ -149,7 +149,7 @@ class DroneControllerGUI:
         self.controller = DroneController()
         self.root = tk.Tk()
         self.root.title("ドローンコントローラー (pygatt)")
-        self.root.geometry("700x900")
+        self.root.geometry("700x1100")
 
         self.setup_ui()
         self.update_status()
@@ -344,6 +344,107 @@ class DroneControllerGUI:
         ).pack(pady=20)
         
 
+        # PIDパラメータ調整フレーム
+        pid_frame = ttk.LabelFrame(self.root, text="PIDパラメータ調整", padding="10")
+        pid_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # PID有効/無効切り替え
+        pid_toggle_frame = ttk.Frame(pid_frame)
+        pid_toggle_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Button(
+            pid_toggle_frame,
+            text="PID ON",
+            command=lambda: self.send_command("PID_ON"),
+            width=10
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            pid_toggle_frame,
+            text="PID OFF",
+            command=lambda: self.send_command("PID_OFF"),
+            width=10
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # Roll PIDパラメータ
+        roll_frame = ttk.Frame(pid_frame)
+        roll_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(roll_frame, text="Roll:", width=6).pack(side=tk.LEFT, padx=5)
+        
+        self.roll_kp = tk.DoubleVar(value=2.0)
+        self.roll_ki = tk.DoubleVar(value=0.0)
+        self.roll_kd = tk.DoubleVar(value=2.0)
+        
+        ttk.Label(roll_frame, text="Kp:").pack(side=tk.LEFT)
+        ttk.Entry(roll_frame, textvariable=self.roll_kp, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Label(roll_frame, text="Ki:").pack(side=tk.LEFT, padx=(10,0))
+        ttk.Entry(roll_frame, textvariable=self.roll_ki, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Label(roll_frame, text="Kd:").pack(side=tk.LEFT, padx=(10,0))
+        ttk.Entry(roll_frame, textvariable=self.roll_kd, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Button(roll_frame, text="設定", command=lambda: self.set_pid_params("ROLL"), width=6).pack(side=tk.LEFT, padx=5)
+        
+        # Pitch PIDパラメータ
+        pitch_frame = ttk.Frame(pid_frame)
+        pitch_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(pitch_frame, text="Pitch:", width=6).pack(side=tk.LEFT, padx=5)
+        
+        self.pitch_kp = tk.DoubleVar(value=2.0)
+        self.pitch_ki = tk.DoubleVar(value=0.0)
+        self.pitch_kd = tk.DoubleVar(value=2.0)
+        
+        ttk.Label(pitch_frame, text="Kp:").pack(side=tk.LEFT)
+        ttk.Entry(pitch_frame, textvariable=self.pitch_kp, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Label(pitch_frame, text="Ki:").pack(side=tk.LEFT, padx=(10,0))
+        ttk.Entry(pitch_frame, textvariable=self.pitch_ki, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Label(pitch_frame, text="Kd:").pack(side=tk.LEFT, padx=(10,0))
+        ttk.Entry(pitch_frame, textvariable=self.pitch_kd, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Button(pitch_frame, text="設定", command=lambda: self.set_pid_params("PITCH"), width=6).pack(side=tk.LEFT, padx=5)
+        
+        # Yaw PIDパラメータ
+        yaw_frame = ttk.Frame(pid_frame)
+        yaw_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(yaw_frame, text="Yaw:", width=6).pack(side=tk.LEFT, padx=5)
+        
+        self.yaw_kp = tk.DoubleVar(value=3.0)
+        self.yaw_ki = tk.DoubleVar(value=0.1)
+        self.yaw_kd = tk.DoubleVar(value=0.8)
+        
+        ttk.Label(yaw_frame, text="Kp:").pack(side=tk.LEFT)
+        ttk.Entry(yaw_frame, textvariable=self.yaw_kp, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Label(yaw_frame, text="Ki:").pack(side=tk.LEFT, padx=(10,0))
+        ttk.Entry(yaw_frame, textvariable=self.yaw_ki, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Label(yaw_frame, text="Kd:").pack(side=tk.LEFT, padx=(10,0))
+        ttk.Entry(yaw_frame, textvariable=self.yaw_kd, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Button(yaw_frame, text="設定", command=lambda: self.set_pid_params("YAW"), width=6).pack(side=tk.LEFT, padx=5)
+        
+        # その他のパラメータ
+        other_params_frame = ttk.LabelFrame(pid_frame, text="その他のパラメータ", padding="5")
+        other_params_frame.pack(fill=tk.X, pady=5)
+        
+        # 不感帯設定
+        deadband_frame = ttk.Frame(other_params_frame)
+        deadband_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(deadband_frame, text="角度不感帯(度):").pack(side=tk.LEFT, padx=5)
+        self.angle_deadband = tk.DoubleVar(value=0.1)
+        ttk.Entry(deadband_frame, textvariable=self.angle_deadband, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Button(deadband_frame, text="設定", command=lambda: self.set_param("DEADBAND", self.angle_deadband.get()), width=6).pack(side=tk.LEFT, padx=5)
+        
+        # 最小補正値設定
+        min_corr_frame = ttk.Frame(other_params_frame)
+        min_corr_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(min_corr_frame, text="最小補正値(µs):").pack(side=tk.LEFT, padx=5)
+        self.min_correction = tk.IntVar(value=30)
+        ttk.Entry(min_corr_frame, textvariable=self.min_correction, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Button(min_corr_frame, text="設定", command=lambda: self.set_param("MIN_CORR", self.min_correction.get()), width=6).pack(side=tk.LEFT, padx=5)
+        
+        # 最大補正値設定
+        max_corr_frame = ttk.Frame(other_params_frame)
+        max_corr_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(max_corr_frame, text="最大補正値(µs):").pack(side=tk.LEFT, padx=5)
+        self.max_correction = tk.IntVar(value=150)
+        ttk.Entry(max_corr_frame, textvariable=self.max_correction, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Button(max_corr_frame, text="設定", command=lambda: self.set_param("MAX_CORR", self.max_correction.get()), width=6).pack(side=tk.LEFT, padx=5)
+        
         # 緊急停止
         ttk.Button(
             self.root,
@@ -418,6 +519,50 @@ class DroneControllerGUI:
         command = f"OFFSET{esc_num} {offset_val}"
         self.controller.send_command(command)
         messagebox.showinfo("設定完了", f"ESC{esc_num}のオフセットを{offset_val}に設定しました")
+
+    def set_pid_params(self, axis):
+        """PIDパラメータ設定"""
+        if not self.controller.connected:
+            messagebox.showwarning("警告", "デバイスが接続されていません")
+            return
+        
+        if axis == "ROLL":
+            kp = self.roll_kp.get()
+            ki = self.roll_ki.get()
+            kd = self.roll_kd.get()
+        elif axis == "PITCH":
+            kp = self.pitch_kp.get()
+            ki = self.pitch_ki.get()
+            kd = self.pitch_kd.get()
+        elif axis == "YAW":
+            kp = self.yaw_kp.get()
+            ki = self.yaw_ki.get()
+            kd = self.yaw_kd.get()
+        else:
+            return
+        
+        # PIDパラメータを送信
+        command = f"PID_{axis} {kp} {ki} {kd}"
+        self.controller.send_command(command)
+        messagebox.showinfo("設定完了", f"{axis}のPIDパラメータを設定しました\nKp={kp}, Ki={ki}, Kd={kd}")
+    
+    def set_param(self, param_name, value):
+        """その他のパラメータ設定"""
+        if not self.controller.connected:
+            messagebox.showwarning("警告", "デバイスが接続されていません")
+            return
+        
+        command = f"SET_{param_name} {value}"
+        self.controller.send_command(command)
+        messagebox.showinfo("設定完了", f"{param_name}を{value}に設定しました")
+    
+    def send_command(self, command):
+        """汎用コマンド送信"""
+        if not self.controller.connected:
+            messagebox.showwarning("警告", "デバイスが接続されていません")
+            return
+        
+        self.controller.send_command(command)
 
     def emergency_stop(self):
         """緊急停止"""

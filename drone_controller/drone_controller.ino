@@ -24,9 +24,11 @@
 
 // PID制御パラメータ
 #define PID_RATE   20            // PID制御周期 (ms)
-#define MAX_CORRECTION 150       // 最大PID補正値 (µs)
-#define ANGLE_DEADBAND 0.1       // 角度不感帯 (度) - これ以下の傾きは無視
-#define MIN_CORRECTION 30        // 最小補正値 (µs) - これ以下の補正は0に
+
+// 動的に調整可能なパラメータ
+float angle_deadband = 0.1;      // 角度不感帯 (度) - これ以下の傾きは無視
+int16_t min_correction = 30;     // 最小補正値 (µs) - これ以下の補正は0に
+int16_t max_correction = 150;    // 最大PID補正値 (µs)
 
 // PID構造体
 struct PIDController {
@@ -51,6 +53,9 @@ PIDController yaw_pid   = {3.0, 0.1, 0.8, 0, 0, 0, 0};
 float roll_angle = 0, pitch_angle = 0, yaw_rate = 0;
 bool pid_enabled = false;
 unsigned long last_pid_time = 0;
+
+// 目標値（ベース推力）
+uint16_t base_throttle = ESC_MIN;  // 全体のベース推力
 
 // ESC個別調整用オフセット
 int16_t esc_offset[4] = {5, 5, 20, -85};  // 各ESCの補正値(FR, BL, BR, FL)
@@ -93,7 +98,7 @@ float calculatePID(PIDController* pid, float input, float dt) {
   float output = pid->kp * error + pid->ki * pid->integral + pid->kd * derivative;
   
   pid->previous_error = error;
-  return constrain(output, -MAX_CORRECTION, MAX_CORRECTION);
+  return constrain(output, -max_correction, max_correction);
 }
 
 /* ---------- PID制御適用 ---------- */
@@ -109,8 +114,8 @@ void applyPIDControl() {
   readIMU();
   
   // 不感帯処理 - 小さな角度は無視
-  if (abs(roll_angle) < ANGLE_DEADBAND) roll_angle = 0;
-  if (abs(pitch_angle) < ANGLE_DEADBAND) pitch_angle = 0;
+  if (abs(roll_angle) < angle_deadband) roll_angle = 0;
+  if (abs(pitch_angle) < angle_deadband) pitch_angle = 0;
   
   // PID計算
   float roll_correction = calculatePID(&roll_pid, roll_angle, dt);
@@ -118,9 +123,9 @@ void applyPIDControl() {
   float yaw_correction = calculatePID(&yaw_pid, yaw_rate, dt);
   
   // 最小補正値処理 - 小さすぎる補正は0に
-  if (abs(roll_correction) < MIN_CORRECTION) roll_correction = 0;
-  if (abs(pitch_correction) < MIN_CORRECTION) pitch_correction = 0;
-  if (abs(yaw_correction) < MIN_CORRECTION) yaw_correction = 0;
+  if (abs(roll_correction) < min_correction) roll_correction = 0;
+  if (abs(pitch_correction) < min_correction) pitch_correction = 0;
+  if (abs(yaw_correction) < min_correction) yaw_correction = 0;
   
   // モーター配置：
   // 0: FR, 1: BL, 2: BR, 3: FL
@@ -144,9 +149,9 @@ void applyPIDControl() {
   motor_correction[2] += +yaw_correction; // BR
   motor_correction[3] += -yaw_correction; // FL
   
-  // PWM値に補正を適用
+  // ベース推力にPID補正を適用
   for (byte i = 0; i < 4; i++) {
-    pwm[i] = constrain(pwm[i] + motor_correction[i], ESC_MIN, ESC_MAX);
+    pwm[i] = constrain(base_throttle + motor_correction[i], ESC_MIN, ESC_MAX);
   }
   
   writeNow();
@@ -286,6 +291,70 @@ else if (!strcmp(cmd,"TEST0")) {
    return;
  }
  
+ /* PIDパラメータ設定 ------------------------------------------------ */
+ else if (strncmp(cmd, "PID_ROLL", 8) == 0) {
+   float kp, ki, kd;
+   if (sscanf(cmd, "PID_ROLL %f %f %f", &kp, &ki, &kd) == 3) {
+     roll_pid.kp = kp;
+     roll_pid.ki = ki;
+     roll_pid.kd = kd;
+     Serial.print("Roll PID set: Kp="); Serial.print(kp);
+     Serial.print(" Ki="); Serial.print(ki);
+     Serial.print(" Kd="); Serial.println(kd);
+   }
+   return;
+ }
+ else if (strncmp(cmd, "PID_PITCH", 9) == 0) {
+   float kp, ki, kd;
+   if (sscanf(cmd, "PID_PITCH %f %f %f", &kp, &ki, &kd) == 3) {
+     pitch_pid.kp = kp;
+     pitch_pid.ki = ki;
+     pitch_pid.kd = kd;
+     Serial.print("Pitch PID set: Kp="); Serial.print(kp);
+     Serial.print(" Ki="); Serial.print(ki);
+     Serial.print(" Kd="); Serial.println(kd);
+   }
+   return;
+ }
+ else if (strncmp(cmd, "PID_YAW", 7) == 0) {
+   float kp, ki, kd;
+   if (sscanf(cmd, "PID_YAW %f %f %f", &kp, &ki, &kd) == 3) {
+     yaw_pid.kp = kp;
+     yaw_pid.ki = ki;
+     yaw_pid.kd = kd;
+     Serial.print("Yaw PID set: Kp="); Serial.print(kp);
+     Serial.print(" Ki="); Serial.print(ki);
+     Serial.print(" Kd="); Serial.println(kd);
+   }
+   return;
+ }
+ 
+ /* その他のパラメータ設定 ------------------------------------------- */
+ else if (strncmp(cmd, "SET_DEADBAND", 12) == 0) {
+   float value;
+   if (sscanf(cmd, "SET_DEADBAND %f", &value) == 1) {
+     angle_deadband = constrain(value, 0.0, 45.0);  // 0～45度の範囲
+     Serial.print("DEADBAND set to: "); Serial.println(angle_deadband);
+   }
+   return;
+ }
+ else if (strncmp(cmd, "SET_MIN_CORR", 12) == 0) {
+   int value;
+   if (sscanf(cmd, "SET_MIN_CORR %d", &value) == 1) {
+     min_correction = constrain(value, 0, 100);  // 0～100µsの範囲
+     Serial.print("MIN_CORRECTION set to: "); Serial.println(min_correction);
+   }
+   return;
+ }
+ else if (strncmp(cmd, "SET_MAX_CORR", 12) == 0) {
+   int value;
+   if (sscanf(cmd, "SET_MAX_CORR %d", &value) == 1) {
+     max_correction = constrain(value, 50, 300);  // 50～300µsの範囲
+     Serial.print("MAX_CORRECTION set to: "); Serial.println(max_correction);
+   }
+   return;
+ }
+ 
  /* 設定表示 --------------------------------------------------------- */
  else if (!strcmp(cmd,"STATUS")) {
    Serial.println("=== ESC Status ===");
@@ -294,6 +363,20 @@ else if (!strcmp(cmd,"TEST0")) {
      Serial.print(pwm[i]); Serial.print(", Offset="); Serial.println(esc_offset[i]);
    }
    Serial.print("PID: "); Serial.println(pid_enabled ? "ON" : "OFF");
+   Serial.println("=== PID Parameters ===");
+   Serial.print("Roll: Kp="); Serial.print(roll_pid.kp);
+   Serial.print(" Ki="); Serial.print(roll_pid.ki);
+   Serial.print(" Kd="); Serial.println(roll_pid.kd);
+   Serial.print("Pitch: Kp="); Serial.print(pitch_pid.kp);
+   Serial.print(" Ki="); Serial.print(pitch_pid.ki);
+   Serial.print(" Kd="); Serial.println(pitch_pid.kd);
+   Serial.print("Yaw: Kp="); Serial.print(yaw_pid.kp);
+   Serial.print(" Ki="); Serial.print(yaw_pid.ki);
+   Serial.print(" Kd="); Serial.println(yaw_pid.kd);
+   Serial.println("=== Other Parameters ===");
+   Serial.print("Angle Deadband: "); Serial.print(angle_deadband); Serial.println(" deg");
+   Serial.print("Min Correction: "); Serial.print(min_correction); Serial.println(" us");
+   Serial.print("Max Correction: "); Serial.print(max_correction); Serial.println(" us");
    return;
  }
 
