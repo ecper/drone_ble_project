@@ -10,6 +10,7 @@
 #include <Wire.h>
 #include <Servo.h>
 #include <LSM6DS3.h>
+#include <MadgwickAHRS.h>
 
 
 #define SLAVE_ADDR 0x08
@@ -26,12 +27,12 @@
 #define PID_RATE   20            // PID制御周期 (ms)
 
 // 動的に調整可能なパラメータ（参考コードベース）
-float angle_deadband = 1.0;      // 角度不感帯 (度) - 1度以下は無視
+float angle_deadband = 0.5;      // 角度不感帯 (度) - 1度以下は無視
 int16_t min_correction = 5;      // 最小補正値 (µs) - 微細な調整も有効
 int16_t max_correction = 100;    // 最大PID補正値 (µs) - 参考コードに合わせて増加
 
 // PIDスケーリング係数（参考コードから）
-float pid_scale_factor = 0.01;   // PID出力のスケーリング（調整可能）
+float pid_scale_factor = 0.5;   // PID出力のスケーリング（1.0でそのまま使用）
 int16_t min_motor_output = 50;   // モーター最小出力保証（ESC_MIN + この値）
 float i_limit = 25.0;           // 積分項制限値
 
@@ -49,10 +50,13 @@ LSM6DS3 imu(I2C_MODE, 0x6A);
 Servo esc[4];
 const uint8_t escPin[4] = {0, 1, 2, 3};
 
-// PIDコントローラー（保守的な設定から開始）
-PIDController roll_pid  = {0.5, 0.0, 0.1, 0, 0, 0, 0};   // 非常に穏やかな反応
-PIDController pitch_pid = {0.5, 0.0, 0.1, 0, 0, 0, 0};   // 振動防止のため低い値
-PIDController yaw_pid   = {0.3, 0.0, 0.05, 0, 0, 0, 0};  // Yawは更に穏やか
+// Madgwickフィルター
+Madgwick filter;
+
+// PIDコントローラー（参考コードベースの値）
+PIDController roll_pid  = {3.0, 0.01, 0.5, 0, 0, 0, 0};   // 参考コードの標準値
+PIDController pitch_pid = {3.0, 0.01, 0.5, 0, 0, 0, 0};   // 参考コードの標準値
+PIDController yaw_pid   = {3.0, 0.01, 0.5, 0, 0, 0, 0};   // Yawは少し控えめ
 
 // 姿勢データ（改良版）
 float roll_angle = 0, pitch_angle = 0, yaw_rate = 0;
@@ -91,7 +95,7 @@ void resetPID() {
   yaw_pid.previous_error = 0.0;
 }
 
-/* ---------- IMU読み取り（改良版） ---------- */
+/* ---------- IMU読み取り（Madgwickフィルター版） ---------- */
 void readIMU() {
   float ax = imu.readFloatAccelX();
   float ay = imu.readFloatAccelY();
@@ -101,15 +105,35 @@ void readIMU() {
   float gy = imu.readFloatGyroY();
   float gz = imu.readFloatGyroZ();
   
-  // 角度計算（加速度から）
-  roll_angle = atan2(ay, az) * 180 / PI;
-  pitch_angle = atan2(-ax, sqrt(ay*ay + az*az)) * 180 / PI;
-  yaw_rate = gz; // Yaw角速度
+  // 元の角度計算方法（Madgwickが動かない場合の比較用）
+  float roll_from_accel = atan2(ay, az) * 180 / PI;
+  float pitch_from_accel = atan2(-ax, sqrt(ay*ay + az*az)) * 180 / PI;
+  
+  // Madgwickフィルターで姿勢を更新（磁気センサーなしの6軸）
+  // 磁気センサーのデータには0を渡す
+  filter.update(gx, gy, gz, ax, ay, az, 0, 0, 0);
+  
+  // フィルターから角度を取得
+  // 一時的に加速度ベースの角度を使用（Madgwickが動作しない場合）
+  roll_angle = roll_from_accel;  // filter.getRoll();
+  pitch_angle = pitch_from_accel; // filter.getPitch();
+  float yaw_angle = filter.getYaw();  // Yaw角度（使用する場合）
+  
+  // デバッグ出力：加速度計算とMadgwick出力の比較
+  static unsigned long lastDebugTime = 0;
+  if (millis() - lastDebugTime > 500) {  // 500ms毎に出力
+    lastDebugTime = millis();
+    Serial.print("Accel angles - R: "); Serial.print(roll_from_accel);
+    Serial.print(" P: "); Serial.print(pitch_from_accel);
+    Serial.print(" | Madgwick - R: "); Serial.print(roll_angle);
+    Serial.print(" P: "); Serial.println(pitch_angle);
+  }
   
   // ジャイロ値も保存（PID微分項用）
   roll_gyro = gx;   // Roll角速度
   pitch_gyro = gy;  // Pitch角速度  
-  yaw_gyro = gz;    // Yaw角速度
+  yaw_gyro = gz;    // Yaw角速度（Yaw制御に使用）
+  yaw_rate = gz;    // 互換性のため
 }
 
 /* ---------- PID計算（改良版） ---------- */
@@ -150,6 +174,15 @@ void applyPIDControl() {
   
   readIMU();
   
+  // デバッグ出力（500ms毎）
+  static unsigned long lastPIDDebug = 0;
+  if (millis() - lastPIDDebug > 500) {
+    lastPIDDebug = millis();
+    Serial.print("PID Debug - Roll: "); Serial.print(roll_angle);
+    Serial.print(" Pitch: "); Serial.print(pitch_angle);
+    Serial.print(" Enabled: "); Serial.println(pid_enabled);
+  }
+  
   // PID計算（ジャイロ値を微分項として使用）
   float roll_correction = calculatePID(&roll_pid, roll_angle, roll_gyro, dt);
   float pitch_correction = calculatePID(&pitch_pid, pitch_angle, pitch_gyro, dt);
@@ -168,10 +201,10 @@ void applyPIDControl() {
   motor_output[3] = base_throttle + roll_correction; // FL
   
   // Pitch制御（前に傾いたら後ろ側のモーターを強く）
-  motor_output[0] -= pitch_correction; // FR
-  motor_output[1] += pitch_correction; // BL
-  motor_output[2] += pitch_correction; // BR
-  motor_output[3] -= pitch_correction; // FL
+  motor_output[0] += pitch_correction; // FR
+  motor_output[1] -= pitch_correction; // BL
+  motor_output[2] -= pitch_correction; // BR
+  motor_output[3] += pitch_correction; // FL
   
   // Yaw制御（時計回りを止めるには反時計回りモーターを強く）
   motor_output[0] += yaw_correction; // FR (時計回り)
@@ -189,22 +222,40 @@ void applyPIDControl() {
     pwm[i] = constrain(motor_output[i], ESC_MIN, ESC_MAX);
   }
   
+  // デバッグ出力（500ms毎）
+  static unsigned long lastCorrectionDebug = 0;
+  if (millis() - lastCorrectionDebug > 500) {
+    lastCorrectionDebug = millis();
+    Serial.print("Corrections - R: "); Serial.print(roll_correction);
+    Serial.print(" P: "); Serial.print(pitch_correction);
+    Serial.print(" Y: "); Serial.println(yaw_correction);
+  }
+  
   writeNow();
 }
 
 /* ---------- 低レベル ---------- */
 void writeNow() {
+ // デバッグ出力制御（PID有効時のみ）
+ static unsigned long lastWriteDebug = 0;
+ bool shouldPrint = pid_enabled && (millis() - lastWriteDebug > 1000);
+ if (shouldPrint) lastWriteDebug = millis();
+ 
  for (byte i = 0; i < 4; i++) {
    uint16_t pw = constrain(pwm[i] + esc_offset[i], ESC_MIN, ESC_MAX);
    esc[i].writeMicroseconds(pw);
    pwm[i] = pw - esc_offset[i];  // 元の値を保持
-   Serial.print("ESC"); Serial.print(i);
-   Serial.print("="); Serial.print(pw);
-   if (esc_offset[i] != 0) {
-     Serial.print("("); Serial.print(pwm[i]); Serial.print("+"); Serial.print(esc_offset[i]); Serial.print(")");
+   
+   if (shouldPrint) {
+     Serial.print("ESC"); Serial.print(i);
+     Serial.print("="); Serial.print(pw);
+     if (esc_offset[i] != 0) {
+       Serial.print("("); Serial.print(pwm[i]); Serial.print("+"); Serial.print(esc_offset[i]); Serial.print(")");
+     }
+     Serial.print(" ");
    }
-   Serial.print("\n");
  }
+ if (shouldPrint) Serial.println();
 }
 
 
@@ -470,7 +521,7 @@ else if (!strcmp(cmd,"TEST0")) {
    roll_pid.kp = 3.0; roll_pid.ki = 0.0; roll_pid.kd = 0.5;
    pitch_pid.kp = 3.0; pitch_pid.ki = 0.0; pitch_pid.kd = 0.5;
    yaw_pid.kp = 2.0; yaw_pid.ki = 0.0; yaw_pid.kd = 0.3;
-   pid_scale_factor = 0.005;  // より小さなスケール
+   pid_scale_factor = 0.5;  // 穏やかなスケール
    Serial.println("PID set to GENTLE mode");
    return;
  }
@@ -479,7 +530,7 @@ else if (!strcmp(cmd,"TEST0")) {
    roll_pid.kp = 6.0; roll_pid.ki = 0.0; roll_pid.kd = 0.8;
    pitch_pid.kp = 6.0; pitch_pid.ki = 0.0; pitch_pid.kd = 0.8;
    yaw_pid.kp = 4.0; yaw_pid.ki = 0.0; yaw_pid.kd = 0.5;
-   pid_scale_factor = 0.01;   // 標準スケール
+   pid_scale_factor = 1.0;   // 標準スケール（そのまま）
    Serial.println("PID set to NORMAL mode");
    return;
  }
@@ -488,7 +539,7 @@ else if (!strcmp(cmd,"TEST0")) {
    roll_pid.kp = 10.0; roll_pid.ki = 0.1; roll_pid.kd = 1.2;
    pitch_pid.kp = 10.0; pitch_pid.ki = 0.1; pitch_pid.kd = 1.2;
    yaw_pid.kp = 6.0; yaw_pid.ki = 0.05; yaw_pid.kd = 0.8;
-   pid_scale_factor = 0.015;  // より大きなスケール
+   pid_scale_factor = 1.5;  // より大きなスケール
    Serial.println("PID set to AGGRESSIVE mode");
    return;
  }
@@ -549,6 +600,10 @@ else if (!strcmp(cmd,"TEST0")) {
    Serial.print("Min Motor Output: "); Serial.print(min_motor_output); Serial.println(" us");
    Serial.print("Base Throttle: "); Serial.println(base_throttle);
    Serial.print("I-term Limit: "); Serial.println(i_limit);
+   Serial.println("=== Current Attitude ===");
+   Serial.print("Roll: "); Serial.print(roll_angle);
+   Serial.print(" Pitch: "); Serial.print(pitch_angle);
+   Serial.print(" Yaw: "); Serial.println(filter.getYaw());
    return;
  }
 
@@ -590,6 +645,10 @@ void setup() {
  } else {
    Serial.println("IMU initialized successfully");
  }
+ 
+ // Madgwickフィルター初期化
+ filter.begin(50.0);  // 50Hz サンプリングレート
+ Serial.println("Madgwick filter initialized");
 
  for (byte i = 0; i < 4; i++) esc[i].attach(escPin[i], ESC_MIN, ESC_MAX);
  stopAll();
