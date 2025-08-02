@@ -15,7 +15,7 @@
 #define SLAVE_ADDR 0x08
 #define ESC_MIN    1000
 #define ESC_MAX    2000
-#define HOVER_THR  1100          // ホバリング推力
+#define HOVER_THR  1450          // ホバリング推力
 #define LAND_THR   1250          // 降下推力
 #define DELTA_XY   10
 #define DELTA_Z    10
@@ -25,9 +25,8 @@
 // PID制御パラメータ
 #define PID_RATE   20            // PID制御周期 (ms)
 #define MAX_CORRECTION 150       // 最大PID補正値 (µs)
-#define ANGLE_DEADBAND 5.0       // 角度不感帯 (度) - これ以下の傾きは無視
+#define ANGLE_DEADBAND 0.1       // 角度不感帯 (度) - これ以下の傾きは無視
 #define MIN_CORRECTION 30        // 最小補正値 (µs) - これ以下の補正は0に
-#define ANGLE_STOP_MOTOR 15.0    // モーター停止角度 (度) - これ以上傾いたらモーター停止
 
 // PID構造体
 struct PIDController {
@@ -44,8 +43,8 @@ Servo esc[4];
 const uint8_t escPin[4] = {0, 1, 2, 3};
 
 // PIDコントローラー（15度でモーター停止するよう調整）
-PIDController roll_pid  = {10.0, 0.0, 2.0, 0, 0, 0, 0};   // 角度に対して強く反応
-PIDController pitch_pid = {10.0, 0.0, 2.0, 0, 0, 0, 0};  // 積分項は0に（振動防止）
+PIDController roll_pid  = {2.0, 0.0, 2.0, 0, 0, 0, 0};   // 角度に対して強く反応
+PIDController pitch_pid = {2.0, 0.0, 2.0, 0, 0, 0, 0};  // 積分項は0に（振動防止）
 PIDController yaw_pid   = {3.0, 0.1, 0.8, 0, 0, 0, 0};
 
 // 姿勢データ
@@ -54,7 +53,7 @@ bool pid_enabled = false;
 unsigned long last_pid_time = 0;
 
 // ESC個別調整用オフセット
-int16_t esc_offset[4] = {5, 5, 20, -85};  // 各ESCの補正値
+int16_t esc_offset[4] = {5, 5, 20, -85};  // 各ESCの補正値(FR, BL, BR, FL)
 
 
 char buf[40];  byte idx = 0;
@@ -124,26 +123,26 @@ void applyPIDControl() {
   if (abs(yaw_correction) < MIN_CORRECTION) yaw_correction = 0;
   
   // モーター配置：
-  // 0: 前左, 1: 前右, 2: 後左, 3: 後右
+  // 0: FR, 1: BL, 2: BR, 3: FL
   int16_t motor_correction[4];
   
   // Roll制御（左右傾き）
-  motor_correction[0] = -roll_correction; // 前左
-  motor_correction[1] = +roll_correction; // 前右
-  motor_correction[2] = -roll_correction; // 後左
-  motor_correction[3] = +roll_correction; // 後右
+  motor_correction[0] = -roll_correction; // FR
+  motor_correction[1] = +roll_correction; // BL
+  motor_correction[2] = -roll_correction; // BR
+  motor_correction[3] = +roll_correction; // FL
   
   // Pitch制御（前後傾き）
-  motor_correction[0] += +pitch_correction; // 前左
-  motor_correction[1] += -pitch_correction; // 前右
-  motor_correction[2] += -pitch_correction; // 後左
-  motor_correction[3] += +pitch_correction; // 後右
+  motor_correction[0] += +pitch_correction; // FR
+  motor_correction[1] += -pitch_correction; // BL
+  motor_correction[2] += -pitch_correction; // BR
+  motor_correction[3] += +pitch_correction; // FL
   
   // Yaw制御（回転）
-  motor_correction[0] += -yaw_correction; // 前左
-  motor_correction[1] += +yaw_correction; // 前右
-  motor_correction[2] += +yaw_correction; // 後左
-  motor_correction[3] += -yaw_correction; // 後右
+  motor_correction[0] += -yaw_correction; // FR
+  motor_correction[1] += +yaw_correction; // BL
+  motor_correction[2] += +yaw_correction; // BR
+  motor_correction[3] += -yaw_correction; // FL
   
   // PWM値に補正を適用
   for (byte i = 0; i < 4; i++) {
@@ -211,16 +210,26 @@ void applyCmd(const char *cmd) {
 
  /* STOP --------------------------------------------------------------- */
  if (!strcmp(cmd, "STOP")) {
+   pid_enabled = false;        // まずPID制御を停止
    if (!landing) {             // 1 回目：降下推力で保持
      rampTo(LAND_THR);
      landing = true;
    } else {                    // 2 回目：完全停止
      stopAll();
      landing = false;
-     pid_enabled = false;      // PID制御停止
    }
    return;
  }
+
+/* 緊急停止 --------------------------------------------------------- */
+ else if (!strcmp(cmd,"EMERGENCY") || !strcmp(cmd,"ESTOP")) {
+   pid_enabled = false;
+   stopAll();
+   landing = false;
+   Serial.println("EMERGENCY STOP!");
+   return;
+ }
+
 
 
  /* 方向 / 上下 -------------------------------------------------------- */
@@ -235,11 +244,34 @@ void applyCmd(const char *cmd) {
  else if (!strcmp(cmd,"PID_OFF")) {pid_enabled = false;}
  
  /* ESC個別テスト ---------------------------------------------------- */
- else if (!strcmp(cmd,"TEST0")) {stopAll(); pwm[0]=HOVER_THR;}  // ESC0のみテスト
- else if (!strcmp(cmd,"TEST1")) {stopAll(); pwm[1]=HOVER_THR;}  // ESC1のみテスト
- else if (!strcmp(cmd,"TEST2")) {stopAll(); pwm[2]=HOVER_THR;}  // ESC2のみテスト
- else if (!strcmp(cmd,"TEST3")) {stopAll(); pwm[3]=HOVER_THR;}  // ESC3のみテスト
-
+else if (!strcmp(cmd,"TEST0")) {
+   pid_enabled = false;  // PID制御を無効化
+   stopAll(); 
+   pwm[0]=HOVER_THR;  // ESC0のみホバリング推力
+   writeNow();         // 変更を適用
+   return;
+ }
+ else if (!strcmp(cmd,"TEST1")) {
+   pid_enabled = false;
+   stopAll(); 
+   pwm[1]=HOVER_THR;  // ESC1のみホバリング推力
+   writeNow();         // 変更を適用
+   return;
+ }
+ else if (!strcmp(cmd,"TEST2")) {
+   pid_enabled = false;
+   stopAll(); 
+   pwm[2]=HOVER_THR;  // ESC2のみホバリング推力
+   writeNow();         // 変更を適用
+   return;
+ }
+ else if (!strcmp(cmd,"TEST3")) {
+   pid_enabled = false;
+   stopAll(); 
+   pwm[3]=HOVER_THR;  // ESC3のみホバリング推力
+   writeNow();         // 変更を適用
+   return;
+ }
 
  /* ESCオフセット調整 ----------------------------------------------- */
  else if (strncmp(cmd, "OFFSET", 6) == 0) {
