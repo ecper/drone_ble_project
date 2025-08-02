@@ -54,9 +54,6 @@ float roll_angle = 0, pitch_angle = 0, yaw_rate = 0;
 bool pid_enabled = false;
 unsigned long last_pid_time = 0;
 
-// 目標値（ベース推力）
-uint16_t base_throttle = ESC_MIN;  // 全体のベース推力
-
 // ESC個別調整用オフセット
 int16_t esc_offset[4] = {5, 5, 20, -85};  // 各ESCの補正値(FR, BL, BR, FL)
 
@@ -149,9 +146,9 @@ void applyPIDControl() {
   motor_correction[2] += +yaw_correction; // BR
   motor_correction[3] += -yaw_correction; // FL
   
-  // ベース推力にPID補正を適用
+  // PWM値に補正を適用
   for (byte i = 0; i < 4; i++) {
-    pwm[i] = constrain(base_throttle + motor_correction[i], ESC_MIN, ESC_MAX);
+    pwm[i] = constrain(pwm[i] + motor_correction[i], ESC_MIN, ESC_MAX);
   }
   
   writeNow();
