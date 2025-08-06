@@ -1,25 +1,25 @@
 #!/bin/bash
 
-# Drone BLE Server 自動起動解除スクリプト
+# Drone BLE Server auto startup disable script
 
-echo "=== Drone BLE Server 自動起動解除 ==="
+echo "=== Drone BLE Server Auto Startup Disable ==="
 
-echo "1. サービスを停止中..."
+echo "1. Stopping service..."
 sudo systemctl stop drone-ble.service
 
-echo "2. サービスを無効化中..."
+echo "2. Disabling service..."
 sudo systemctl disable drone-ble.service
 
-echo "3. systemdサービスファイルを削除中..."
+echo "3. Deleting systemd service file..."
 sudo rm -f /etc/systemd/system/drone-ble.service
 
-echo "4. systemdを再読み込み中..."
+echo "4. Reloading systemd..."
 sudo systemctl daemon-reload
 
 echo ""
-echo "=== 解除完了 ==="
-echo "drone_ble_server.pyの自動起動が無効になりました"
+echo "=== Disable Complete ==="
+echo "Auto startup of drone_ble_server.py has been disabled."
 echo ""
-echo "手動起動する場合:"
+echo "To start manually:"
 echo "cd /home/uchida/Documents/fov-prog/drone_ble_project/raspberry_pi"
 echo "sudo python3 drone_ble_server.py"

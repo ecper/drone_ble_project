@@ -1,9 +1,9 @@
 /*
-* Quad‑ESC Controller  v7 with PID Control
-*  RUN  : 現在値 → HOVER_THR へ ふわっと加速（ランプアップ）
-*  STOP : 1回目 LAND_THR で降下保持, 2回目 ESC_MIN で完全停止
-*  方向/UP/DOWN/PARALLEL : 即時に推力変更・保持
-*  PID制御による姿勢安定化
+* Quad ESC Controller v7 with PID Control
+*  RUN  : Current value to HOVER_THR with smooth acceleration (ramp up)
+*  STOP : First press LAND_THR for descent hold, second press ESC_MIN for complete stop
+*  Direction/UP/DOWN/PARALLEL : Immediate thrust change and hold
+*  Attitude stabilization with PID control
 */
 
 
@@ -16,28 +16,28 @@
 #define SLAVE_ADDR 0x08
 #define ESC_MIN    1000
 #define ESC_MAX    2000
-#define HOVER_THR  1250          // ホバリング推力
-#define LAND_THR   1250          // 降下推力
+#define HOVER_THR  1250          // Hovering thrust
+#define LAND_THR   1250          // Landing thrust
 #define DELTA_XY   10
 #define DELTA_Z    10
-#define RAMP_STEP  10            // 1 ステップあたりの増分 (µs)
-#define RAMP_DELAY 15            // ステップ間ウエイト (ms)
+#define RAMP_STEP  10            // Increment per step (µs)
+#define RAMP_DELAY 15            // Wait between steps (ms)
 
-// PID制御パラメータ
-#define PID_RATE   20            // PID制御周期 (ms)
+// PID control parameter
+#define PID_RATE   20            // PID control period (ms)
 
-// 動的に調整可能なパラメータ（参考コードベース）
-float angle_deadband = 0.5;      // 角度不感帯 (度) - 1度以下は無視
-int16_t min_correction = 5;      // 最小補正値 (µs) - 微細な調整も有効
-int16_t max_correction = 100;    // 最大PID補正値 (µs) - 参考コードに合わせて増加
+// Dynamically adjustable parameters (based on reference code)
+float angle_deadband = 0.5;      // Angle deadband (degrees) - ignore 1 degree or less
+int16_t min_correction = 5;      // Minimum correction value (µs) - enables fine adjustments
+int16_t max_correction = 100;    // Maximum PID correction value (µs) - increased based on reference code
 
-// PIDスケーリング係数（参考コードから）
-float pid_scale_factor = 0.5;   // PID出力のスケーリング（1.0でそのまま使用）
-int16_t min_motor_output = 50;   // モーター最小出力保証（ESC_MIN + この値）
-float i_limit = 25.0;           // 積分項制限値
-bool use_gyro_for_derivative = true;  // D項の実装方法（true: ジャイロ使用, false: エラー微分使用）
+// PID scaling parameters (from reference code)
+float pid_scale_factor = 0.5;   // PID output scaling (1.0 uses as-is)
+int16_t min_motor_output = 50;   // Minimum motor output guarantee (ESC_MIN + this value)
+float i_limit = 25.0;           // Integral term limit value
+bool use_gyro_for_derivative = true;  // D-term implementation method (true: use gyro, false: use error derivative)
 
-// PID構造体
+// PID structure
 struct PIDController {
   float kp, ki, kd;
   float previous_error;
@@ -46,57 +46,57 @@ struct PIDController {
   unsigned long last_time;
 };
 
-// センサーとESC
+// Sensor and ESC
 LSM6DS3 imu(I2C_MODE, 0x6A);
 Servo esc[4];
 const uint8_t escPin[4] = {0, 1, 2, 3};
 
-// Madgwickフィルター
+// Madgwick filter
 Madgwick filter;
 
-// PIDコントローラー（参考コードベースの値）
-PIDController roll_pid  = {3.0, 0.01, 0.5, 0, 0, 0, 0};   // 参考コードの標準値
-PIDController pitch_pid = {3.0, 0.01, 0.5, 0, 0, 0, 0};   // 参考コードの標準値
-PIDController yaw_pid   = {3.0, 0.01, 0.5, 0, 0, 0, 0};   // Yawは少し控えめ
+// PID controllers (reference code based values)
+PIDController roll_pid  = {3.0, 0.0, 0.3, 0, 0, 0, 0};   // Reference code standard value
+PIDController pitch_pid = {3.0, 0.0, 1.2, 0, 0, 0, 0};   // Reference code standard value
+PIDController yaw_pid   = {0.0, 0.0, 0.0, 0, 0, 0, 0};   // Yaw is slightly conservative
 
-// 姿勢データ（改良版）
+// Attitude data (improved version)
 float roll_angle = 0, pitch_angle = 0, yaw_rate = 0;
-float roll_gyro = 0, pitch_gyro = 0, yaw_gyro = 0;  // ジャイロ値追加
+float roll_gyro = 0, pitch_gyro = 0, yaw_gyro = 0;  // Gyro value addition
 bool pid_enabled = false;
 unsigned long last_pid_time = 0;
 
-// ベース推力管理
-uint16_t base_throttle = HOVER_THR;  // ベース推力
+// Base thrust management
+uint16_t base_throttle = HOVER_THR;  // Base thrust
 
-// ESC個別調整用オフセット
-int16_t esc_offset[4] = {45, -5, -5, -30};  // 各ESCの補正値(FR, BL, BR, FL)
+// ESC individual adjustment offset
+int16_t esc_offset[4] = {0, -60, -0, -60};  // Each ESC correction value (FR, BL, BR, FL)
 
 
 char buf[40];  byte idx = 0;
-bool landing = false;            // STOP1 → true
-uint16_t pwm[4] = {ESC_MIN, ESC_MIN, ESC_MIN, ESC_MIN}; // 常に現在値を保持
+bool landing = false;            // STOP 1 becomes true
+uint16_t pwm[4] = {ESC_MIN, ESC_MIN, ESC_MIN, ESC_MIN}; // Always keep current values
 
 
 
-/* ---------- PIDリセット ---------- */
+/* ---------- PID reset ---------- */
 void resetPID() {
-  // 目標角度を0に
+  // Set target angle to 0
   roll_pid.setpoint = 0.0;
   pitch_pid.setpoint = 0.0;
   yaw_pid.setpoint = 0.0;
   
-  // 積分項をリセット
+  // Reset integral term
   roll_pid.integral = 0.0;
   pitch_pid.integral = 0.0;
   yaw_pid.integral = 0.0;
   
-  // 前回のエラーもリセット
+  // Reset previous error as well
   roll_pid.previous_error = 0.0;
   pitch_pid.previous_error = 0.0;
   yaw_pid.previous_error = 0.0;
 }
 
-/* ---------- IMU読み取り（Madgwickフィルター版） ---------- */
+/* ---------- IMU read (Madgwick filter version) ---------- */
 void readIMU() {
   float ax = imu.readFloatAccelX();
   float ay = imu.readFloatAccelY();
@@ -106,23 +106,23 @@ void readIMU() {
   float gy = imu.readFloatGyroY();
   float gz = imu.readFloatGyroZ();
   
-  // 元の角度計算方法（Madgwickが動かない場合の比較用）
+  // Original angle calculation method (for comparison when Madgwick doesn't work)
   float roll_from_accel = atan2(ay, az) * 180 / PI;
   float pitch_from_accel = atan2(-ax, sqrt(ay*ay + az*az)) * 180 / PI;
   
-  // Madgwickフィルターで姿勢を更新（磁気センサーなしの6軸）
-  // 磁気センサーのデータには0を渡す
+  // Update attitude with Madgwick filter (6-axis without magnetic sensor)
+  // Pass 0 for magnetic sensor data
   filter.update(gx, gy, gz, ax, ay, az, 0, 0, 0);
   
-  // フィルターから角度を取得
-  // 一時的に加速度ベースの角度を使用（Madgwickが動作しない場合）
+  // Get angles from filter
+  // Temporarily use accelerometer-based angles (when Madgwick doesn't behave)
   roll_angle = roll_from_accel;  // filter.getRoll();
   pitch_angle = pitch_from_accel; // filter.getPitch();
-  float yaw_angle = filter.getYaw();  // Yaw角度（使用する場合）
+  float yaw_angle = filter.getYaw();  // Yaw angle (when using)
   
-  // デバッグ出力：加速度計算とMadgwick出力の比較
+  // Debug output: comparison of accelerometer calculation and Madgwick output
   static unsigned long lastDebugTime = 0;
-  if (millis() - lastDebugTime > 500) {  // 500ms毎に出力
+  if (millis() - lastDebugTime > 500) {  // Output every 500ms
     lastDebugTime = millis();
     Serial.print("Accel angles - R: "); Serial.print(roll_from_accel);
     Serial.print(" P: "); Serial.print(pitch_from_accel);
@@ -130,50 +130,50 @@ void readIMU() {
     Serial.print(" P: "); Serial.println(pitch_angle);
   }
   
-  // ジャイロ値も保存（PID微分項用）
-  roll_gyro = gx;   // Roll角速度
-  pitch_gyro = gy;  // Pitch角速度  
-  yaw_gyro = gz;    // Yaw角速度（Yaw制御に使用）
-  yaw_rate = gz;    // 互換性のため
+  // Save gyro values as well (for PID derivative term)
+  roll_gyro = gx;   // Roll angular velocity
+  pitch_gyro = gy;  // Pitch angular velocity  
+  yaw_gyro = gz;    // Yaw angular velocity (used for yaw control)
+  yaw_rate = gz;    // For compatibility
 }
 
-/* ---------- PID計算（正しい実装） ---------- */
+/* ---------- PID calculation (correct implementation) ---------- */
 float calculatePID(PIDController* pid, float input, float gyro_rate, float dt) {
   float error = pid->setpoint - input;
   
-  // 不感帯処理
+  // Deadband processing
   if (abs(error) < angle_deadband) {
     error = 0.0;
   }
   
-  // 積分項
+  // Integral term
   pid->integral += error * dt;
-  pid->integral = constrain(pid->integral, -i_limit, i_limit); // 積分ワインドアップ防止
+  pid->integral = constrain(pid->integral, -i_limit, i_limit); // Prevent integral windup
   
-  // 微分項の計算方法を動的に選択
+  // Dynamically select derivative term calculation method
   float derivative;
   if (use_gyro_for_derivative) {
-    // 方法1: ジャイロ値を直接使用（より高速な応答、ノイズに敏感）
-    // 注意: ジャイロ値は角速度なので、エラーの符号と逆にする必要がある
-    derivative = -gyro_rate; // 負号で補正
+    // Method 1: Direct use of gyro value (faster response, sensitive to noise)
+    // Note: Gyro value is angular velocity, so need to invert sign from error
+    derivative = -gyro_rate; // Correction with negative sign
   } else {
-    // 方法2: エラーの変化率を使用（標準的なPID、よりスムーズ）
+    // Method 2: Use error change rate (standard PID, smoother)
     derivative = (error - pid->previous_error) / dt;
-    // dtが0の場合の安全チェック
+    // Safety check for case when dt is 0
     if (dt <= 0.001) derivative = 0;
   }
   
-  // PID出力計算
+  // PID output calculation
   float output = pid->kp * error + pid->ki * pid->integral + pid->kd * derivative;
   
-  // スケーリング（参考コードから）
+  // Scaling (from reference code)
   output = output * pid_scale_factor;
   
   pid->previous_error = error;
   return constrain(output, -max_correction, max_correction);
 }
 
-/* ---------- PID制御適用（改良版） ---------- */
+/* ---------- Apply PID control (improved version) ---------- */
 void applyPIDControl() {
   if (!pid_enabled) return;
   
@@ -185,7 +185,7 @@ void applyPIDControl() {
   
   readIMU();
   
-  // デバッグ出力（500ms毎）
+  // Debug output (every 500ms)
   static unsigned long lastPIDDebug = 0;
   if (millis() - lastPIDDebug > 500) {
     lastPIDDebug = millis();
@@ -194,46 +194,46 @@ void applyPIDControl() {
     Serial.print(" Enabled: "); Serial.println(pid_enabled);
   }
   
-  // PID計算（ジャイロ値を微分項として使用）
+  // PID calculation (using gyro value as derivative term)
   float roll_correction = calculatePID(&roll_pid, roll_angle, roll_gyro, dt);
   float pitch_correction = calculatePID(&pitch_pid, pitch_angle, pitch_gyro, dt);
   float yaw_correction = calculatePID(&yaw_pid, yaw_rate, yaw_gyro, dt);
   
-  // モーター配置：
-  // 0: FR (前右), 1: BL (後左), 2: BR (後右), 3: FL (前左)
+  // Motor layout:
+  // 0: FR (front right), 1: BL (back left), 2: BR (back right), 3: FL (front left)
   
-  // ベース推力からの補正量計算（参考コードの手法）
+  // Calculate correction amount from base thrust (reference code method)
   float motor_output[4];
   
-  // Roll制御（右に傾いたら右側のモーターを強く）
+  // Roll control (strengthen right side motors when tilting right)
   motor_output[0] = base_throttle - roll_correction; // FR
   motor_output[1] = base_throttle + roll_correction; // BL  
   motor_output[2] = base_throttle - roll_correction; // BR
   motor_output[3] = base_throttle + roll_correction; // FL
   
-  // Pitch制御（前に傾いたら後ろ側のモーターを強く）
+  // Pitch control (strengthen back side motors when tilting forward)
   motor_output[0] += pitch_correction; // FR
   motor_output[1] -= pitch_correction; // BL
   motor_output[2] -= pitch_correction; // BR
   motor_output[3] += pitch_correction; // FL
   
-  // Yaw制御（時計回りを止めるには反時計回りモーターを強く）
-  motor_output[0] += yaw_correction; // FR (時計回り)
-  motor_output[1] += yaw_correction; // BL (反時計回り)
-  motor_output[2] -= yaw_correction; // BR (時計回り)
-  motor_output[3] -= yaw_correction; // FL (反時計回り)
+  // Yaw control (strengthen counterclockwise motors to stop clockwise rotation)
+  motor_output[0] += yaw_correction; // FR (clockwise)
+  motor_output[1] += yaw_correction; // BL (counterclockwise)
+  motor_output[2] -= yaw_correction; // BR (clockwise)
+  motor_output[3] -= yaw_correction; // FL (counterclockwise)
   
-  // 最小モーター出力保証と範囲制限
+  // Minimum motor output guarantee and range restriction
   for (byte i = 0; i < 4; i++) {
-    // 最小出力保証
+    // Minimum output guarantee
     if (motor_output[i] < ESC_MIN + min_motor_output) {
       motor_output[i] = ESC_MIN + min_motor_output;
     }
-    // 最大値制限
+    // Maximum value restriction
     pwm[i] = constrain(motor_output[i], ESC_MIN, ESC_MAX);
   }
   
-  // デバッグ出力（500ms毎）
+  // Debug output (every 500ms)
   static unsigned long lastCorrectionDebug = 0;
   if (millis() - lastCorrectionDebug > 500) {
     lastCorrectionDebug = millis();
@@ -245,9 +245,9 @@ void applyPIDControl() {
   writeNow();
 }
 
-/* ---------- 低レベル ---------- */
+/* ---------- Low level ---------- */
 void writeNow() {
- // デバッグ出力制御（PID有効時のみ）
+ // Debug output control (only when PID enabled)
  static unsigned long lastWriteDebug = 0;
  bool shouldPrint = pid_enabled && (millis() - lastWriteDebug > 1000);
  if (shouldPrint) lastWriteDebug = millis();
@@ -255,7 +255,7 @@ void writeNow() {
  for (byte i = 0; i < 4; i++) {
    uint16_t pw = constrain(pwm[i] + esc_offset[i], ESC_MIN, ESC_MAX);
    esc[i].writeMicroseconds(pw);
-   pwm[i] = pw - esc_offset[i];  // 元の値を保持
+   pwm[i] = pw - esc_offset[i];  // Keep original value
    
    if (shouldPrint) {
      Serial.print("ESC"); Serial.print(i);
@@ -276,7 +276,7 @@ void stopAll() {
 }
 
 
-/* ---------- ランプアップ ---------- */
+/* ---------- Ramp up ---------- */
 void rampTo(uint16_t tgt) {
  bool done = false;
  while (!done) {
@@ -296,40 +296,40 @@ void rampTo(uint16_t tgt) {
 }
 
 
-/* ---------- コマンド適用 ---------- */
+/* ---------- Apply command ---------- */
 void applyCmd(const char *cmd) {
 
 
  /* RUN ---------------------------------------------------------------- */
  if (!strcmp(cmd, "RUN")) {
-   base_throttle = HOVER_THR;   // ベース推力を設定
-   rampTo(HOVER_THR);          // 現在値→1450 µs へ滑らかに変化
+   base_throttle = HOVER_THR;   // Set base thrust
+   rampTo(HOVER_THR);          // current value to 1450 µs  smoothly
    landing = false;
-   pid_enabled = true;         // PID制御開始
+   pid_enabled = true;         // Begin PID control
    last_pid_time = millis();
-   resetPID();                 // PIDパラメータを初期化
+   resetPID();                 // Initialize PID parameters
    return;
  }
 
 
  /* STOP --------------------------------------------------------------- */
  if (!strcmp(cmd, "STOP")) {
-   pid_enabled = false;        // まずPID制御を停止
-   // 目標角度をリセット
+   pid_enabled = false;        // First stop PID control
+   // Reset target angle
    roll_pid.setpoint = 0.0;
    pitch_pid.setpoint = 0.0;
    yaw_pid.setpoint = 0.0;
-   if (!landing) {             // 1 回目：降下推力で保持
+   if (!landing) {             // 1st time: maintain with descent thrust
      rampTo(LAND_THR);
      landing = true;
-   } else {                    // 2 回目：完全停止
+   } else {                    // 2nd time: complete stop
      stopAll();
      landing = false;
    }
    return;
  }
 
-/* 緊急停止 --------------------------------------------------------- */
+/* Emergency stop --------------------------------------------------------- */
  else if (!strcmp(cmd,"EMERGENCY") || !strcmp(cmd,"ESTOP")) {
    pid_enabled = false;
    stopAll();
@@ -340,116 +340,116 @@ void applyCmd(const char *cmd) {
 
 
 
- /* 方向 / 上下 -------------------------------------------------------- */
+ /* Direction / Up/Down -------------------------------------------------------- */
  if (!strcmp(cmd,"FWD"))  {
    if (pid_enabled) {
-     // PID制御時：目標角度を設定（前進は機首を下げる）
-     pitch_pid.setpoint = -5.0;  // -5度
+     // When PID control: set target angle（forward lowers the nose）
+     pitch_pid.setpoint = -5.0;  // -5 degrees
    } else {
-     // 通常制御時：PWM値を直接調整
+     // When normal control: directly adjust PWM values
      pwm[0]-=DELTA_XY; pwm[1]-=DELTA_XY; pwm[2]+=DELTA_XY; pwm[3]+=DELTA_XY;
    }
  }
  else if (!strcmp(cmd,"BACK")) {
    if (pid_enabled) {
-     // PID制御時：目標角度を設定（後退は機首を上げる）
-     pitch_pid.setpoint = 5.0;   // +5度
+     // When PID control: set target angle（backward raises the nose）
+     pitch_pid.setpoint = 5.0;   // +5 degrees
    } else {
-     // 通常制御時：PWM値を直接調整
+     // When normal control: directly adjust PWM values
      pwm[0]+=DELTA_XY; pwm[1]+=DELTA_XY; pwm[2]-=DELTA_XY; pwm[3]-=DELTA_XY;
    }
  }
  else if (!strcmp(cmd,"LEFT")) {
    if (pid_enabled) {
-     // PID制御時：目標角度を設定（左移動は右に傾ける）
-     roll_pid.setpoint = 5.0;    // +5度
+     // When PID control: set target angle（left move tilts to right）
+     roll_pid.setpoint = 5.0;    // +5 degrees
    } else {
-     // 通常制御時：PWM値を直接調整
+     // When normal control: directly adjust PWM values
      pwm[0]-=DELTA_XY; pwm[1]+=DELTA_XY; pwm[2]-=DELTA_XY; pwm[3]+=DELTA_XY;
    }
  }
  else if (!strcmp(cmd,"RIGHT")){
    if (pid_enabled) {
-     // PID制御時：目標角度を設定（右移動は左に傾ける）
-     roll_pid.setpoint = -5.0;   // -5度
+     // When PID control: set target angle（right move tilts to left）
+     roll_pid.setpoint = -5.0;   // -5 degrees
    } else {
-     // 通常制御時：PWM値を直接調整
+     // When normal control: directly adjust PWM values
      pwm[0]+=DELTA_XY; pwm[1]-=DELTA_XY; pwm[2]+=DELTA_XY; pwm[3]-=DELTA_XY;
    }
  }
  else if (!strcmp(cmd,"UP"))   {
    if (pid_enabled) {
-     // PID制御時：ベース推力を増加
+     // When PID control: increase base thrust
      base_throttle = constrain(base_throttle + DELTA_Z, ESC_MIN + min_motor_output, ESC_MAX - max_correction);
    } else {
-     // 通常制御時：全体の推力を増加
+     // When normal control: increase all thrust
      for(byte i=0;i<4;i++) pwm[i]+=DELTA_Z;
    }
  }
  else if (!strcmp(cmd,"DOWN")) {
    if (pid_enabled) {
-     // PID制御時：ベース推力を減少
+     // When PID control: decrease base thrust
      base_throttle = constrain(base_throttle - DELTA_Z, ESC_MIN + min_motor_output, ESC_MAX - max_correction);
    } else {
-     // 通常制御時：全体の推力を減少
+     // When normal control: decrease all thrust
      for(byte i=0;i<4;i++) pwm[i]-=DELTA_Z;
    }
  }
  else if (!strcmp(cmd,"PALALEL")){
    if (pid_enabled) {
-     // PID制御時：目標角度を水平（0度）に戻す
+     // When PID control: set target angle to horizontal（0 degrees)
      roll_pid.setpoint = 0.0;
      pitch_pid.setpoint = 0.0;
      yaw_pid.setpoint = 0.0;
    } else {
-     // 通常制御時：全モーターをホバリング推力に
+     // When normal control: set all motors to hovering thrust
      for(byte i=0;i<4;i++) pwm[i]=HOVER_THR;
    }
  }
  else if (!strcmp(cmd,"PID_ON")) {
    pid_enabled = true; 
    last_pid_time = millis();
-   resetPID();  // PIDパラメータを初期化
+   resetPID();  // Initialize PID parameters
  }
  else if (!strcmp(cmd,"PID_OFF")) {
    pid_enabled = false;
-   // 目標角度のみリセット（積分項は保持）
+   // Reset target angle（(keep integral term)）
    roll_pid.setpoint = 0.0;
    pitch_pid.setpoint = 0.0;
    yaw_pid.setpoint = 0.0;
  }
  
- /* ESC個別テスト ---------------------------------------------------- */
+ /* ESC individual test ---------------------------------------------------- */
 else if (!strcmp(cmd,"TEST0")) {
-   pid_enabled = false;  // PID制御を無効化
+   pid_enabled = false;  // Disable PID control
    stopAll(); 
-   pwm[0]=HOVER_THR;  // ESC0のみホバリング推力
-   writeNow();         // 変更を適用
+   pwm[0]=HOVER_THR;  // ESC0 only hovering thrust
+   writeNow();         // Apply change
    return;
  }
  else if (!strcmp(cmd,"TEST1")) {
    pid_enabled = false;
    stopAll(); 
-   pwm[1]=HOVER_THR;  // ESC1のみホバリング推力
-   writeNow();         // 変更を適用
+   pwm[1]=HOVER_THR;  // ESC1 only hovering thrust
+   writeNow();         // Apply change
    return;
  }
  else if (!strcmp(cmd,"TEST2")) {
    pid_enabled = false;
    stopAll(); 
-   pwm[2]=HOVER_THR;  // ESC2のみホバリング推力
-   writeNow();         // 変更を適用
+   pwm[2]=HOVER_THR;  // ESC2 only hovering thrust
+   writeNow();         // Apply change
    return;
  }
  else if (!strcmp(cmd,"TEST3")) {
    pid_enabled = false;
    stopAll(); 
-   pwm[3]=HOVER_THR;  // ESC3のみホバリング推力
-   writeNow();         // 変更を適用
+   pwm[3]=HOVER_THR;  // ESC3 only hovering thrust
+   writeNow();         // Apply change
    return;
  }
 
- /* ESCオフセット調整 ----------------------------------------------- */
+ /* ESC offset adjustment ----------------------------------------------- */
  else if (strncmp(cmd, "OFFSET", 6) == 0) {
    int esc_num, offset_val;
    if (sscanf(cmd, "OFFSET%d %d", &esc_num, &offset_val) == 2) {
@@ -462,7 +462,7 @@ else if (!strcmp(cmd,"TEST0")) {
    return;
  }
  
- /* PIDパラメータ設定 ------------------------------------------------ */
+ /* PID parameter settings ------------------------------------------------ */
  else if (strncmp(cmd, "PID_ROLL", 8) == 0) {
    float kp, ki, kd;
    if (sscanf(cmd, "PID_ROLL %f %f %f", &kp, &ki, &kd) == 3) {
@@ -500,11 +500,11 @@ else if (!strcmp(cmd,"TEST0")) {
    return;
  }
  
- /* その他のパラメータ設定 ------------------------------------------- */
+ /* Other parameter settings ------------------------------------------- */
  else if (strncmp(cmd, "SET_DEADBAND", 12) == 0) {
    float value;
    if (sscanf(cmd, "SET_DEADBAND %f", &value) == 1) {
-     angle_deadband = constrain(value, 0.0, 45.0);  // 0～45度の範囲
+     angle_deadband = constrain(value, 0.0, 45.0);  // 0-45 degrees range
      Serial.print("DEADBAND set to: "); Serial.println(angle_deadband);
    }
    return;
@@ -512,7 +512,7 @@ else if (!strcmp(cmd,"TEST0")) {
  else if (strncmp(cmd, "SET_MIN_CORR", 12) == 0) {
    int value;
    if (sscanf(cmd, "SET_MIN_CORR %d", &value) == 1) {
-     min_correction = constrain(value, 0, 100);  // 0～100µsの範囲
+     min_correction = constrain(value, 0, 100);  // 0-100µs range
      Serial.print("MIN_CORRECTION set to: "); Serial.println(min_correction);
    }
    return;
@@ -520,42 +520,42 @@ else if (!strcmp(cmd,"TEST0")) {
  else if (strncmp(cmd, "SET_MAX_CORR", 12) == 0) {
    int value;
    if (sscanf(cmd, "SET_MAX_CORR %d", &value) == 1) {
-     max_correction = constrain(value, 5, 200);  // 5～200µsの範囲（安全のため上限下げ）
+     max_correction = constrain(value, 5, 200);  // 5-200µs range (lower upper limit for safety)
      Serial.print("MAX_CORRECTION set to: "); Serial.println(max_correction);
    }
    return;
  }
  
- /* 簡単調整コマンド ------------------------------------------------- */
+ /* Simple adjustment command ------------------------------------------------- */
  else if (!strcmp(cmd, "PID_GENTLE")) {
-   // より穏やかなPID設定（参考コードベース）
+   // More gentle PID settings（(reference code base)）
    roll_pid.kp = 3.0; roll_pid.ki = 0.0; roll_pid.kd = 0.5;
    pitch_pid.kp = 3.0; pitch_pid.ki = 0.0; pitch_pid.kd = 0.5;
    yaw_pid.kp = 2.0; yaw_pid.ki = 0.0; yaw_pid.kd = 0.3;
-   pid_scale_factor = 0.5;  // 穏やかなスケール
+   pid_scale_factor = 0.5;  // gentle scale
    Serial.println("PID set to GENTLE mode");
    return;
  }
  else if (!strcmp(cmd, "PID_NORMAL")) {
-   // 標準的なPID設定（参考コードベース）
+   // Standard PID settings（(reference code base)）
    roll_pid.kp = 6.0; roll_pid.ki = 0.0; roll_pid.kd = 0.8;
    pitch_pid.kp = 6.0; pitch_pid.ki = 0.0; pitch_pid.kd = 0.8;
    yaw_pid.kp = 4.0; yaw_pid.ki = 0.0; yaw_pid.kd = 0.5;
-   pid_scale_factor = 1.0;   // 標準スケール（そのまま）
+   pid_scale_factor = 1.0;   // standard scale (as-is)
    Serial.println("PID set to NORMAL mode");
    return;
  }
  else if (!strcmp(cmd, "PID_AGGRESSIVE")) {
-   // より積極的なPID設定（上級者向け）
+   // More aggressive PID settings（for advanced users）
    roll_pid.kp = 10.0; roll_pid.ki = 0.1; roll_pid.kd = 1.2;
    pitch_pid.kp = 10.0; pitch_pid.ki = 0.1; pitch_pid.kd = 1.2;
    yaw_pid.kp = 6.0; yaw_pid.ki = 0.05; yaw_pid.kd = 0.8;
-   pid_scale_factor = 1.5;  // より大きなスケール
+   pid_scale_factor = 1.5;  // larger scale
    Serial.println("PID set to AGGRESSIVE mode");
    return;
  }
  
- /* 詳細パラメータ調整 ------------------------------------------- */
+ /* Detail parameter adjustment ------------------------------------------- */
  else if (strncmp(cmd, "SET_SCALE", 9) == 0) {
    float value;
    if (sscanf(cmd, "SET_SCALE %f", &value) == 1) {
@@ -581,21 +581,21 @@ else if (!strcmp(cmd,"TEST0")) {
    return;
  }
  
- /* D項実装方法切り替え -------------------------------------------- */
+ /* D-term implementation method switching -------------------------------------------- */
  else if (!strcmp(cmd, "D_GYRO")) {
-   // ジャイロベースのD項に切り替え
+   // Switch to gyro-based D-term
    use_gyro_for_derivative = true;
    Serial.println("Derivative method: GYRO (faster response)");
    return;
  }
  else if (!strcmp(cmd, "D_ERROR")) {
-   // エラー微分ベースのD項に切り替え
+   // Switch to error derivative-based D-term
    use_gyro_for_derivative = false;
    Serial.println("Derivative method: ERROR_DIFF (smoother)");
    return;
  }
  
- /* 設定表示 --------------------------------------------------------- */
+ /* Show settings --------------------------------------------------------- */
  else if (!strcmp(cmd,"STATUS")) {
    Serial.println("=== ESC Status ===");
    for (byte i = 0; i < 4; i++) {
@@ -634,12 +634,12 @@ else if (!strcmp(cmd,"TEST0")) {
    return;
  }
 
- /* 任意 4 値 --------------------------------------------------------- */
+ /* Arbitrary 4 values --------------------------------------------------------- */
  else {
    uint16_t p0,p1,p2,p3;
    if (sscanf(cmd, "%hu %hu %hu %hu", &p0,&p1,&p2,&p3) == 4) {
      pwm[0]=p0; pwm[1]=p1; pwm[2]=p2; pwm[3]=p3;
-   } else return;              // 無効文字列は無視
+   } else return;              // Ignore disabled string
  }
 
 
@@ -649,7 +649,7 @@ else if (!strcmp(cmd,"TEST0")) {
 }
 
 
-/* ---------- I²C 受信 ---------- */
+/* ---------- I2C receive ---------- */
 void onReceive(int) {
  idx = 0;
  while (Wire.available() && idx < sizeof(buf) - 1) {
@@ -661,20 +661,20 @@ void onReceive(int) {
 }
 
 
-/* ---------- セットアップ ---------- */
+/* ---------- Setup ---------- */
 void setup() {
- Serial.begin(115200);  // シリアル通信開始
+ Serial.begin(115200);  // Begin serial communication
  Serial.println("ESC Controller with PID Started");
  
- // IMU初期化
+ // IMU initialize
  if (imu.begin() != 0) {
    Serial.println("IMU initialization failed!");
  } else {
    Serial.println("IMU initialized successfully");
  }
  
- // Madgwickフィルター初期化
- filter.begin(50.0);  // 50Hz サンプリングレート
+ // Madgwick filter initialize
+ filter.begin(50.0);  // 50Hz sampling rate
  Serial.println("Madgwick filter initialized");
 
  for (byte i = 0; i < 4; i++) esc[i].attach(escPin[i], ESC_MIN, ESC_MAX);
@@ -687,8 +687,8 @@ void setup() {
 
 /* ---------- LOOP ---------- */
 void loop() {
-  applyPIDControl();  // PID制御を連続実行
-  delay(1);           // 短いディレイ
+  applyPIDControl();  // PID control continuous execution
+  delay(1);           // short delay
 }
 
 

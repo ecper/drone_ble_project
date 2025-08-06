@@ -7,13 +7,13 @@ import time
 import base64
 import binascii
 
-# プラットフォーム検出
+# Platform detection
 IS_RASPBERRY_PI = platform.machine().startswith('arm') or 'raspberry' in platform.node().lower()
 
 print(f"Platform detected: {platform.system()} {platform.machine()}")
 print(f"Running on Raspberry Pi: {IS_RASPBERRY_PI}")
 
-# D-Bus関連のインポート
+# D-Bus related imports
 try:
     import dbus
     import dbus.service  
@@ -25,7 +25,7 @@ except ImportError as e:
     print(f"D-Bus not available: {e}")
     DBUS_AVAILABLE = False
 
-# GLib関連のインポート
+# GLib related imports
 try:
     from gi.repository import GLib
     GLIB_AVAILABLE = True
@@ -34,7 +34,7 @@ except ImportError as e:
     print(f"GLib not available: {e}")
     GLIB_AVAILABLE = False
 
-# I2Cライブラリをインポート
+# I2C library imports
 try:
     import smbus2
     I2C_AVAILABLE = True
@@ -43,7 +43,7 @@ except ImportError:
     print("I2C (smbus2) not available - using mock")
     I2C_AVAILABLE = False
 
-# 必要な依存関係チェック
+# Check required dependencies
 if not DBUS_AVAILABLE or not GLIB_AVAILABLE:
     print("Error: Required dependencies missing!")
     print("Please run: ./install_pc_ble_deps.sh")
@@ -52,11 +52,11 @@ if not DBUS_AVAILABLE or not GLIB_AVAILABLE:
     print("  pip3 install PyGObject dbus-python")
     sys.exit(1)
 
-# --- ロギング設定 ---
+# --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- BlueZ D-Bus インターフェース定義 (変更なし) ---
+# --- BlueZ D-Bus interface definitions (no change) ---
 BLUEZ_SERVICE_NAME = 'org.bluez'
 GATT_MANAGER_IFACE = 'org.bluez.GattManager1'
 LE_ADVERTISING_MANAGER_IFACE = 'org.bluez.LEAdvertisingManager1'
@@ -68,26 +68,26 @@ GATT_CHRC_IFACE = 'org.bluez.GattCharacteristic1'
 GATT_DESC_IFACE = 'org.bluez.GattDescriptor1'
 LE_ADVERTISEMENT_IFACE = 'org.bluez.LEAdvertisement1'
 
-# --- GATTサービスとキャラクタリスティックのUUID ---
-# !!! 重要: これらはご自身で生成したUUIDに置き換えてください !!!
+# --- GATT service and characteristic UUIDs ---
+# !!! IMPORTANT: Replace these with your own generated UUIDs !!!
 DRONE_SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 COMMAND_CHARACTERISTIC_UUID = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 STATUS_CHARACTERISTIC_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
-# --- Arduino I2C設定 ---
-# Raspberry Pi 4/5では通常I2Cバス1を使用します。
-# Arduinoに設定するI2Cスレーブアドレス
+# --- Arduino I2C Settings ---
+# Raspberry Pi 4/5 usually uses I2C bus 1.
+# Arduino I2C slave address
 I2C_BUS = 1 
-ARDUINO_I2C_ADDRESS = 0x08 # 例: ArduinoのWire.begin(0x08); で設定するアドレス
+ARDUINO_I2C_ADDRESS = 0x08 # Example: address set with Arduino Wire.begin(0x08);
 
-# モックI2Cクラス（PC環境用）
+# Mock I2C class (for PC environment)
 class MockI2C:
     def __init__(self, bus=1):
         self.bus = bus
         logger.info(f"Mock I2C bus {bus} initialized")
     
     def write_i2c_block_data(self, addr, reg, data):
-        """I2C書き込みをシミュレート"""
+        """Simulate I2C write"""
         try:
             command_str = ''.join([chr(b) for b in data if 32 <= b <= 126])
             logger.info(f"Mock I2C write to 0x{addr:02X}: '{command_str}'")
@@ -96,30 +96,30 @@ class MockI2C:
         return True
     
     def read_i2c_block_data(self, addr, reg, length):
-        """I2C読み取りをシミュレート"""
+        """Simulate I2C read"""
         dummy_data = [0x00] * length
         logger.info(f"Mock I2C read from 0x{addr:02X}: {dummy_data}")
         return dummy_data
     
     def close(self):
-        """バスを閉じる"""
+        """Close bus"""
         logger.info("Mock I2C bus closed")
 
-# I2Cバスオブジェクト
-bus = None # グローバルで宣言
+# I2C bus object
+bus = None # Declared globally
 
-# 通知用のグローバルなキャラクタリスティック参照
+# Global characteristic reference for notifications
 status_characteristic_obj = None
 
-# --- ヘルパー関数など (BlueZサンプルからの流用、変更なし) ---
-def find_adapter(bus_obj): # 'bus' と名前が衝突するため 'bus_obj' に変更
+# --- Helper functions etc. (borrowed from BlueZ samples, no change) ---
+def find_adapter(bus_obj): # Changed to 'bus_obj' to avoid name collision with 'bus'
     remote_om = dbus.Interface(bus_obj.get_object(BLUEZ_SERVICE_NAME, '/'), DBUS_OM_IFACE)
     objects = remote_om.GetManagedObjects()
     for path, interfaces in objects.items():
         if (LE_ADVERTISING_MANAGER_IFACE in interfaces and 
             GATT_MANAGER_IFACE in interfaces):
             return path
-    # フォールバック: どちらか一方でもサポートしているアダプターを探す
+    # Fallback: find adapter that supports at least one of the interfaces
     for path, interfaces in objects.items():
         if (LE_ADVERTISING_MANAGER_IFACE in interfaces or 
             GATT_MANAGER_IFACE in interfaces):
@@ -138,7 +138,7 @@ class NotPermittedException(dbus.exceptions.DBusException):
 class NotAuthorizedException(dbus.exceptions.DBusException):
     _dbus_error_name = 'org.bluez.Error.NotAuthorized'
 
-# --- GATTサービス、キャラクタリスティック、ディスクリプタのクラス (変更なし) ---
+# --- GATT service, characteristic, and descriptor classes (no change) ---
 class Application(dbus.service.Object):
     def __init__(self, bus_obj):
         self.path = '/'
@@ -244,13 +244,13 @@ class Characteristic(dbus.service.Object):
 
     @dbus.service.method(GATT_CHRC_IFACE, in_signature='a{sv}', out_signature='ay')
     def ReadValue(self, options):
-        logger.info(f"ReadValue called for {self.uuid}")
+        logger.info(f"Readvalue called for {self.uuid}")
         logger.info(f"Options: {options}")
         return dbus.Array(b'Default Value', signature='y')
 
     @dbus.service.method(GATT_CHRC_IFACE, in_signature='aya{sv}')
     def WriteValue(self, value, options):
-        logger.info(f"WriteValue called for {self.uuid} with value: {bytes(value).decode('utf-8')}")
+        logger.info(f"Writevalue called for {self.uuid} with value: {bytes(value).decode('utf-8')}")
 
     @dbus.service.method(GATT_CHRC_IFACE)
     def StartNotify(self):
@@ -292,14 +292,14 @@ class Descriptor(dbus.service.Object):
 
     @dbus.service.method(GATT_DESC_IFACE, in_signature='a{sv}', out_signature='ay')
     def ReadValue(self, options):
-        logger.info(f"ReadValue called for descriptor {self.uuid}")
+        logger.info(f"Readvalue called for descriptor {self.uuid}")
         return dbus.Array(b'Default Descriptor Value', signature='y')
 
     @dbus.service.method(GATT_DESC_IFACE, in_signature='aya{sv}')
     def WriteValue(self, value, options):
-        logger.info(f"WriteValue called for descriptor {self.uuid} with value: {bytes(value).decode('utf-8')}")
+        logger.info(f"Writevalue called for descriptor {self.uuid} with value: {bytes(value).decode('utf-8')}")
 
-# --- ドローン制御用のGATTサービスとキャラクタリスティックの実装 ---
+# --- GATT service and characteristic implementation for drone control ---
 class DroneService(Service):
     def __init__(self, bus_obj, index):
         super().__init__(bus_obj, index, DRONE_SERVICE_UUID, True)
@@ -308,54 +308,54 @@ class DroneService(Service):
 
 class CommandCharacteristic(Characteristic):
     def __init__(self, bus_obj, index, service):
-        # セキュリティなしで書き込み可能に設定
+        # Write possible without security
         super().__init__(bus_obj, index, COMMAND_CHARACTERISTIC_UUID,
                          ['write-without-response'], service)
 
     def WriteValue(self, value, options):
         """
-        iPhoneアプリがCOMMAND_CHARACTERISTICにデータを書き込んだときに呼び出される。
+        Called when iPhone app writes data to COMMAND_CHARACTERISTIC.
         """
         try:
-            # デバッグ: 受信したデータの詳細情報を表示
+            # debug: received data detail information
             logger.info(f"Raw value type: {type(value)}, length: {len(value)}")
             logger.info(f"Raw value bytes: {[hex(b) for b in value]}")
             
-            # 空のデータチェック
+            # empty data check
             if not value or len(value) == 0:
                 logger.warning("Received empty BLE command")
                 GLib.idle_add(send_status_notification, "ERR:Empty_CMD")
                 return
             
-            # Base64デコード試行
+            # Base64 decode attempt
             try:
-                # まず生のバイトデータをUTF-8文字列として取得
+                # first get raw byte data as UTF-8 string
                 base64_str = bytes(value).decode('utf-8').strip()
                 logger.info(f"Received Base64 string: '{base64_str}'")
                 
-                # Base64デコード
+                # Base64 decode
                 decoded_bytes = base64.b64decode(base64_str)
                 command_str = decoded_bytes.decode('utf-8').strip()
                 logger.info(f"Decoded command: '{command_str}'")
             except (binascii.Error, ValueError) as b64_err:
                 logger.warning(f"Base64 decode failed: {b64_err}, trying direct UTF-8 decode")
-                # Base64デコードに失敗した場合は、直接UTF-8デコードを試みる（互換性のため）
+                # If Base64 decode fails, try direct UTF-8 decode (for compatibility)
                 command_str = bytes(value).decode('utf-8').strip()
                 logger.info(f"Direct decoded command: '{command_str}'")
 
-            # 空文字列チェック
+            # empty string check
             if not command_str:
                 logger.warning("Command string is empty after decoding")
                 GLib.idle_add(send_status_notification, "ERR:Empty_STR")
                 return
 
-            # I2CでArduinoにコマンドを送信
-            if bus: # I2Cバスが初期化されているか確認
-                # 文字列をバイトのリストに変換
+            # transmit command to Arduino via I2C
+            if bus: # check if I2C bus is initialized
+                # convert string to byte list
                 data_bytes = [ord(char) for char in command_str]
-                # ArduinoにI2Cで書き込み (write_i2c_block_data を使用)
+                # write to Arduino via I2C (using write_i2c_block_data)
                 try:
-                    bus.write_i2c_block_data(ARDUINO_I2C_ADDRESS, 0, data_bytes) # 0はレジスタアドレス（任意）
+                    bus.write_i2c_block_data(ARDUINO_I2C_ADDRESS, 0, data_bytes) # 0 is register address (arbitrary)
                     logger.info(f"Sent to Arduino via I2C: '{command_str}'")
                     GLib.idle_add(send_status_notification, f"CMD_RX:{command_str[:15]}")
                 except Exception as i2c_error:
@@ -368,9 +368,9 @@ class CommandCharacteristic(Characteristic):
         except UnicodeDecodeError as e:
             logger.error(f"Failed to decode BLE data (not UTF-8): {e}")
             logger.error(f"Raw bytes that failed to decode: {[hex(b) for b in value]}")
-            # 生のバイトデータとして処理を試みる
+            # try processing as raw byte data
             try:
-                # ASCII範囲内の文字のみ抽出
+                # extract only ASCII range characters
                 ascii_chars = [chr(b) for b in value if 32 <= b <= 126]
                 if ascii_chars:
                     command_str = ''.join(ascii_chars)
@@ -389,11 +389,11 @@ class StatusCharacteristic(Characteristic):
     def __init__(self, bus_obj, index, service):
         super().__init__(bus_obj, index, STATUS_CHARACTERISTIC_UUID,
                          ['read', 'notify'], service)
-        self.notifying = False # 通知状態を管理
+        self.notifying = False # manage notification state
 
     def ReadValue(self, options):
         """
-        iPhoneアプリがSTATUS_CHARACTERISTICからデータを読み取ろうとしたときに呼び出される。
+        Called when iPhone app tries to read data from STATUS_CHARACTERISTIC.
         """
         current_status = b"OK:Ready" 
         logger.info(f"Status read requested. Sending: '{current_status.decode()}'")
@@ -401,7 +401,7 @@ class StatusCharacteristic(Characteristic):
 
     def StartNotify(self):
         """
-        iPhoneアプリが通知を購読開始したときに呼び出される。
+        Called when iPhone app begins notification subscription.
         """
         if self.notifying:
             logger.info("Already notifying.")
@@ -412,7 +412,7 @@ class StatusCharacteristic(Characteristic):
 
     def StopNotify(self):
         """
-        iPhoneアプリが通知購読を停止したときに呼び出される。
+        Called when iPhone app stops notification subscription.
         """
         if not self.notifying:
             logger.info("Not notifying.")
@@ -424,14 +424,14 @@ class StatusCharacteristic(Characteristic):
     @dbus.service.signal(DBUS_PROP_IFACE, signature='sa{sv}as')
     def PropertiesChanged(self, interface, changed_properties, invalidated_properties):
         """
-        GATTCharacteristic1インターフェースのPropertiesChangedシグナルを送信するヘルパー関数。
-        これにより、購読しているクライアントに値の変更を通知できる。
+        Helper function to send GATTCharacteristic1 interface PropertiesChanged signal.
+        This can notify subscribing clients of value changes.
         """
         pass
 
 def send_status_notification(status_message: str):
     """
-    ドローンのステータスを更新し、購読しているiPhoneアプリに通知を送信する。
+    Update drone status and send notification to subscribing iPhone app.
     """
     global status_characteristic_obj
     if status_characteristic_obj and status_characteristic_obj.notifying:
@@ -447,9 +447,9 @@ def send_status_notification(status_message: str):
             logger.error(f"Error sending BLE notification: {e}")
     else:
         logger.debug(f"Status '{status_message}' not sent (no subscribers or char not ready).")
-    return GLib.SOURCE_REMOVE # GLib.idle_add から呼ばれる場合、一度だけ実行して終了
+    return GLib.SOURCE_REMOVE # when called from GLib.idle_add, execute once and end
 
-# --- BLEアドバタイズメントのクラス (変更なし) ---
+# --- BLE advertisement class (no change) ---
 class Advertisement(dbus.service.Object):
     PATH_BASE = '/org/bluez/example/advertisement'
 
@@ -462,7 +462,7 @@ class Advertisement(dbus.service.Object):
         self.solicit_uuids = None
         self.service_data = None
         self.include_tx_power = False
-        # ペアリング不要のBLEペリフェラルとして動作
+        # BLE peripheral behavior without pairing requirement
         self.discoverable = True
         dbus.service.Object.__init__(self, bus_obj, self.path)
 
@@ -482,7 +482,7 @@ class Advertisement(dbus.service.Object):
             properties['IncludeTxPower'] = dbus.Boolean(self.include_tx_power)
         if hasattr(self, 'local_name') and self.local_name is not None:
             properties['LocalName'] = self.local_name
-        # BLEペリフェラルとして動作（ペアリング不要）
+        # BLE peripheral behavior (no pairing required)
         properties['Discoverable'] = dbus.Boolean(True)
         return {LE_ADVERTISEMENT_IFACE: properties}
 
@@ -528,20 +528,20 @@ def register_app_error_cb(error):
     logger.error(f'Failed to register application: {error}')
     GLib.MainLoop().quit()
 
-# --- システム要件チェック関数 ---
+# --- system requirements check function ---
 def check_system_requirements():
-    """システムの要件をチェックする"""
+    """check system requirements"""
     import os
     import subprocess
     
-    # I2Cデバイスファイルの存在確認
+    # check I2C device file existence
     i2c_device = f"/dev/i2c-{I2C_BUS}"
     if not os.path.exists(i2c_device):
         logger.error(f"I2C device {i2c_device} not found. Please enable I2C interface.")
         logger.error("Run: sudo raspi-config -> Interface Options -> I2C -> Enable")
         return False
     
-    # BlueZの存在確認
+    # check BlueZ existence
     try:
         subprocess.run(["which", "bluetoothctl"], check=True, capture_output=True)
     except subprocess.CalledProcessError:
@@ -549,7 +549,7 @@ def check_system_requirements():
         logger.error("Run: sudo apt-get install bluez")
         return False
     
-    # Bluetoothサービスの状態確認
+    # check Bluetooth service status
     try:
         result = subprocess.run(["systemctl", "is-active", "bluetooth"], 
                               capture_output=True, text=True)
@@ -561,12 +561,12 @@ def check_system_requirements():
     
     return True
 
-# --- メイン関数 ---
+# --- Main function ---
 def setup_bluetooth_no_pairing():
-    """Bluetoothペアリング要求を無効化"""
+    """disable Bluetooth pairing requirement"""
     import subprocess
     try:
-        # bluetoothctlでペアリング不要の設定
+        # Set no pairing required with bluetoothctl
         commands = [
             ["bluetoothctl", "power", "on"],
             ["bluetoothctl", "pairable", "on"],
@@ -581,21 +581,21 @@ def setup_bluetooth_no_pairing():
         logger.warning(f"Could not configure bluetooth: {e}")
 
 def main():
-    global bus, status_characteristic_obj # I2Cバスオブジェクトもグローバルに設定
+    global bus, status_characteristic_obj # set I2C bus object as global as well
 
-    # 0. システム要件のチェック
+    # 0. check system requirements
     if not check_system_requirements():
         logger.error("System requirements not met. Exiting.")
         sys.exit(1)
     
-    # Bluetoothペアリング設定
+    # Bluetooth pairing settings
     setup_bluetooth_no_pairing()
 
-    # 1. I2Cバスの初期化
+    # 1. I2C bus initialization
     global bus
     if I2C_AVAILABLE:
         try:
-            bus = smbus2.SMBus(I2C_BUS) # I2Cバスを開く
+            bus = smbus2.SMBus(I2C_BUS) # open I2C bus
             logger.info(f"Successfully opened I2C bus {I2C_BUS}.")
         except Exception as e:
             logger.error(f"Failed to open I2C bus: {e}. Using mock I2C.")
@@ -604,12 +604,12 @@ def main():
         logger.info("I2C not available, using mock I2C")
         bus = MockI2C()
 
-    # 2. D-Busとアダプターの初期化
+    # 2. D-Bus and adapter initialization
     try:
         dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-        dbus_bus = dbus.SystemBus() # D-Busオブジェクトの名前衝突を避けるため変数名変更
+        dbus_bus = dbus.SystemBus() # change variable name to avoid D-Bus object name collision
         
-        # Bluetoothアダプターの存在確認
+        # check Bluetooth adapter existence
         adapter_path = find_adapter(dbus_bus)
         if adapter_path is None:
             logger.error("No Bluetooth adapter found. Please check if Bluetooth is enabled.")
@@ -621,12 +621,12 @@ def main():
         logger.error(f"Failed to initialize D-Bus or find Bluetooth adapter: {e}")
         sys.exit(1)
 
-    # 3. GATTアプリケーションとサービス、キャラクタリスティックの登録
+    # 3. register GATT application, service, and characteristics
     app = Application(dbus_bus)
     drone_service = DroneService(dbus_bus, 0)
     app.add_service(drone_service)
     
-    # StatusCharacteristicのインスタンスをグローバル変数に保存
+    # save StatusCharacteristic instance to global variable
     for char in drone_service.get_characteristics():
         if char.uuid == STATUS_CHARACTERISTIC_UUID:
             status_characteristic_obj = char
@@ -645,51 +645,51 @@ def main():
                                         reply_handler=register_app_cb,
                                         error_handler=register_app_error_cb)
 
-    # 4. BLEアドバタイズメントの登録
+    # 4. Register BLE advertisement
     ad_manager = dbus.Interface(
         dbus_bus.get_object(BLUEZ_SERVICE_NAME, adapter_path),
         LE_ADVERTISING_MANAGER_IFACE)
 
     advertisement = Advertisement(dbus_bus, 0, 'peripheral')
     advertisement.add_service_uuid(DRONE_SERVICE_UUID)
-    advertisement.add_local_name("RaspberryPiDrone") # デバイス名を設定
-    advertisement.include_tx_power = True  # 送信電力を含める（ペアリング不要のヒント）
+    advertisement.add_local_name("RaspberryPiDrone") # Set device name
+    advertisement.include_tx_power = True  # Include transmission power (tip for no pairing required)
 
     logger.info("Registering BLE Advertisement...")
     ad_manager.RegisterAdvertisement(advertisement.get_path(), {},
                                      reply_handler=register_ad_cb,
                                      error_handler=register_ad_error_cb)
 
-    # 5. GLibメインループの開始
-    logger.info("BLE Peripheral started. Advertising and waiting for connections...")
+    # 5. Start GLib main loop
+    logger.info("BLE Peripheral started. Advertising and waiting for Connects...")
     
-    # ArduinoからのI2Cデータを定期的に読み取り、通知を送信するループをGLibに統合
+    # GLib integrated loop to regularly read I2C data from Arduino and send notifications
     def arduino_reader_loop():
-        if bus: # I2Cバスが初期化されているか確認
+        if bus: # check if I2C bus is initialized
             try:
-                # ArduinoからI2Cでデータを読み取り (例: 10バイト)
-                # Arduinoスケッチで、read_i2c_block_dataで読み取れるように準備しておく必要がある
-                # 例: Arduino側でWire.onRequestでデータを返すようにする
+                # Read data from Arduino via I2C (example: 10 bytes)
+                # Arduino sketch needs to be prepared so data can be read with read_i2c_block_data
+                # Example: make Arduino return data with Wire.onRequest
                 # data_from_arduino = bus.read_i2c_block_data(ARDUINO_I2C_ADDRESS, 0, 10) 
                 
-                # ここでは仮のデータを生成
+                # generate dummy data here
                 dummy_status_from_arduino = f"Arduino_Loop:{int(time.time()) % 100}"
                 if dummy_status_from_arduino:
                     logger.debug(f"Received (dummy) from Arduino via I2C: '{dummy_status_from_arduino}'")
-                    # I2Cで受信したデータが有効であれば、BLE通知を送信
+                    # if data received via I2C is valid, send BLE notification
                     send_status_notification(f"I2C_DATA:{dummy_status_from_arduino}")
             except Exception as e:
                 logger.error(f"Error reading from Arduino via I2C: {e}")
-        return True # ループを継続するためにTrueを返す
+        return True # return True to continue loop
 
-    GLib.timeout_add(500, arduino_reader_loop) # 500msごとにArduinoからの読み取りを試みる
+    GLib.timeout_add(500, arduino_reader_loop) # attempt to read from Arduino every 500ms
 
-    # メインループを開始
+    # start main loop
     mainloop = GLib.MainLoop()
     try:
         mainloop.run()
     except KeyboardInterrupt:
-        logger.info("BLE Peripheral stopped by user (Ctrl+C).")
+        logger.info("BLE Peripheral Stopped by user (Ctrl+C).")
     finally:
         logger.info("Unregistering GATT Application and Advertisement...")
         try:

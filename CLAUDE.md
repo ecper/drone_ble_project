@@ -1,174 +1,174 @@
 # CLAUDE.md
 
-このファイルは、このリポジトリでコードを扱う際のClaude Code (claude.ai/code)向けのガイダンスを提供します。
+This file provides guidance for Claude Code (claude.ai/code) when working with code in this repository.
 
-## プロジェクト概要
+## Project Overview
 
-自作ドローン制御システムの開発プロジェクトです。システムは以下の3つの主要コンポーネントで構成されています：
+This is a development project for a custom drone control system. The system consists of three main components:
 
-1. **iPhoneアプリ** (React Native Expo): ユーザーインターフェース、BLE通信
-2. **Raspberry Pi 5**: BLEサーバー、メインコントローラー、I2Cマスター
-3. **Arduino**: 低レベル制御、モーター/ESC制御、センサーデータ収集
+1. **iPhone App** (React Native Expo): User interface, BLE communication
+2. **Raspberry Pi 5**: BLE server, main controller, I2C master
+3. **Arduino**: Low-level control, motor/ESC control, sensor data collection
 
-### 通信フロー
-- iPhone → Raspberry Pi: BLE（Bluetooth Low Energy）
-- Raspberry Pi → Arduino: I2C（Inter-Integrated Circuit）
-- Arduino → モーター: PWM（Pulse Width Modulation）
+### Communication Flow
+- iPhone → Raspberry Pi: BLE (Bluetooth Low Energy)
+- Raspberry Pi → Arduino: I2C (Inter-Integrated Circuit)
+- Arduino → Motors: PWM (Pulse Width Modulation)
 
-## 現在のプロジェクト状況
+## Current Project Status
 
-- **実装済み**: Raspberry Pi用BLEサーバー (`drone_ble_server.py`)
-- **未実装**: 
-  - iPhoneアプリ (React Native Expo)
-  - Arduinoスケッチ
-  - ESC/モーター制御ロジック
+- **Implemented**: BLE server for Raspberry Pi (`drone_ble_server.py`)
+- **Not Implemented**: 
+  - iPhone app (React Native Expo)
+  - Arduino sketch
+  - ESC/motor control logic
 
-## システムアーキテクチャ
+## System Architecture
 
-### 1. Raspberry Pi側 (drone_ble_server.py)
+### 1. Raspberry Pi Side (drone_ble_server.py)
 
-**BLEサーバー機能**
-- D-BusとBlueZ APIを使用
-- GATTサーバーの実装
-- BLEアドバタイジング（デバイス名: "RaspberryPiDrone"）
+**BLE Server Features**
+- Uses D-Bus and BlueZ API
+- GATT server implementation
+- BLE advertising (device name: "RaspberryPiDrone")
 
-**GATTサービス構造**
-- サービスUUID: `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
-- コマンド特性: `6E400002-B5A3-F393-E0A9-E50E24DCCA9E` (write, write-without-response)
-- ステータス特性: `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` (read, notify)
+**GATT Service Structure**
+- Service UUID: `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
+- Command characteristic: `6E400002-B5A3-F393-E0A9-E50E24DCCA9E` (write, write-without-response)
+- Status characteristic: `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` (read, notify)
 
-**I2C設定**
-- バス: 1 (Raspberry Pi 4/5の標準)
-- Arduinoアドレス: 0x08
-- smbus2ライブラリを使用
+**I2C Configuration**
+- Bus: 1 (standard for Raspberry Pi 4/5)
+- Arduino address: 0x08
+- Uses smbus2 library
 
-### 2. iPhoneアプリ側 (未実装)
+### 2. iPhone App Side (Not Implemented)
 
-**技術スタック**
+**Technology Stack**
 - React Native Expo
-- react-native-ble-plx ライブラリ
-- Expo Dev Client（Expo Goでは動作しない）
+- react-native-ble-plx library
+- Expo Dev Client (does not work with Expo Go)
 
-**主要機能**
-- BLEスキャンとデバイス接続
-- ジョイスティックUIによる操作
-- コマンド送信（例: "T1500,P10,R20,Y-5"）
-- ステータス受信と表示
+**Main Features**
+- BLE scan and device connection
+- Joystick UI operation
+- Command transmission (example: "T1500,P10,R20,Y-5")
+- Status reception and display
 
-### 3. Arduino側 (未実装)
+### 3. Arduino Side (Not Implemented)
 
-**主要機能**
-- I2Cスレーブとして動作
-- モーター/ESC制御（PWM信号）
-- センサーデータ収集（IMU等）
-- PID制御による飛行安定化
+**Main Features**
+- Operates as I2C slave
+- Motor/ESC control (PWM signals)
+- Sensor data collection (IMU, etc.)
+- Flight stabilization with PID control
 
-## 開発コマンド
+## Development Commands
 
-### サーバーの実行
+### Server Execution
 ```bash
-# Python 3で実行
+# Run with Python 3
 python3 drone_ble_server.py
 
-# 権限エラーが発生した場合はsudoで実行
+# Use sudo if permission error occurs
 sudo python3 drone_ble_server.py
 ```
 
-### システム要件
+### System Requirements
 ```bash
-# I2Cインターフェースを有効化
+# Enable I2C interface
 sudo raspi-config
-# Interface Options → I2C → Enable に移動
+# Navigate to Interface Options → I2C → Enable
 
-# 必要なシステムパッケージをインストール
+# Install required system packages
 sudo apt-get install bluez python3-dbus python3-gi
 
-# Python依存関係をインストール
+# Install Python dependencies
 pip3 install smbus2
 ```
 
-### デバッグ
+### Debugging
 ```bash
-# Bluetoothサービスの状態を確認
+# Check Bluetooth service status
 systemctl status bluetooth
 
-# 実行中のシステムログを監視
+# Monitor running system logs
 journalctl -f | grep -i bluetooth
 
-# I2Cデバイスを確認
+# Check I2C devices
 i2cdetect -y 1
 
-# BLEアドバタイジングをテスト
+# Test BLE advertising
 sudo hcitool lescan
 ```
 
-## コード構造
+## Code Structure
 
-### 主要クラス
-- `Application`: GATTサービスを管理するD-Busオブジェクト
-- `DroneService`: ドローン制御用のカスタムGATTサービス
-- `CommandCharacteristic`: iPhoneからの書き込み操作を処理
-- `StatusCharacteristic`: iPhoneへの読み取り/通知操作を処理
-- `Advertisement`: BLEアドバタイジングを管理
+### Main Classes
+- `Application`: D-Bus object that manages GATT services
+- `DroneService`: Custom GATT service for drone control
+- `CommandCharacteristic`: Processes write operations from iPhone
+- `StatusCharacteristic`: Processes read/notification operations to iPhone
+- `Advertisement`: Manages BLE advertising
 
-### 主要関数
-- `main()`: エントリーポイント、I2C、D-Busを初期化し、サービスを開始
-- `send_status_notification()`: 接続されたデバイスにBLE通知を送信
-- `arduino_reader_loop()`: 定期的なI2Cポーリング（現在はダミーデータを使用）
-- `check_system_requirements()`: システム設定を検証
+### Main Functions
+- `main()`: Entry point, initializes I2C and D-Bus, starts services
+- `send_status_notification()`: Sends BLE notifications to connected devices
+- `arduino_reader_loop()`: Regular I2C polling (currently uses dummy data)
+- `check_system_requirements()`: Verifies system configuration
 
-### エラーハンドリング
-- I2C通信エラーはキャッチされ、ログに記録される
-- BLE登録の失敗はアプリケーションの終了をトリガー
-- ステータス通知にはエラーコードが含まれる（例: "ERR:I2C_Not_Ready"）
+### Error Handling
+- I2C communication errors are caught and logged
+- BLE registration failures trigger application termination
+- Status notifications include error codes (example: "ERR:I2C_Not_Ready")
 
-## 開発フェーズ
+## Development Phases
 
-### フェーズ1: Raspberry PiのBLE・I2C環境構築とテスト
-- Raspberry Pi OSの更新とI2C有効化
-- Python環境構築とdrone_ble_server.pyの動作確認
-- Arduino I2Cスレーブの基本実装とテスト
+### Phase 1: Raspberry Pi BLE & I2C Environment Setup and Testing
+- Update Raspberry Pi OS and enable I2C
+- Set up Python environment and verify drone_ble_server.py operation
+- Basic implementation and testing of Arduino I2C slave
 
-### フェーズ2: iPhoneアプリ開発と連携テスト
-- React Native Expoプロジェクトのセットアップ
-- BLEクライアント機能の実装
-- Raspberry Piとの通信テスト
+### Phase 2: iPhone App Development and Integration Testing
+- React Native Expo project setup
+- BLE client functionality implementation
+- Communication testing with Raspberry Pi
 
-### フェーズ3: ドローン制御ロジックの実装
-- Arduinoフライトコントローラーの実装
-- PID制御とモーター制御
-- 安全性テストと調整
+### Phase 3: Drone Control Logic Implementation
+- Arduino flight controller implementation
+- PID control and motor control
+- Safety testing and adjustments
 
-## 重要な注意事項
+## Important Notes
 
-1. **開発環境**: drone_ble_server.pyはRaspberry Pi上で動作するものであり、開発PCでは実行しない
+1. **Development Environment**: drone_ble_server.py runs on Raspberry Pi and should not be executed on development PC
 
-2. **I2C通信**: 
-   - arduino_reader_loopは現在ダミーデータを生成している
-   - Raspberry Pi (3.3V) とArduino (5V) 間にはロジックレベルコンバーターが必要
+2. **I2C Communication**: 
+   - arduino_reader_loop currently generates dummy data
+   - Logic level converter needed between Raspberry Pi (3.3V) and Arduino (5V)
 
-3. **権限**: Raspberry Pi上でBLE操作にはsudoが必要
+3. **Permissions**: sudo required for BLE operations on Raspberry Pi
 
-4. **UUID**: 現在のUUIDは例であり、本番環境では独自に生成したUUIDに置き換える
+4. **UUID**: Current UUIDs are examples and should be replaced with custom-generated UUIDs in production environment
 
-5. **ハードウェア**:
-   - モーター: MT2204-2300KV ブラシレスDCモーター
-   - ESC（Electronic Speed Controller）が必要
-   - IMU等のセンサーが必要
+5. **Hardware**:
+   - Motors: MT2204-2300KV brushless DC motors
+   - ESC (Electronic Speed Controller) required
+   - IMU and other sensors required
 
-## プロジェクト構造（推奨）
+## Project Structure (Recommended)
 
 ```
 drone_ble_project/
 ├── raspberry_pi/
-│   └── drone_ble_server.py    # 実装済み
+│   └── drone_ble_server.py    # Implemented
 ├── arduino/
-│   └── drone_controller/      # 未実装
+│   └── drone_controller/      # Not implemented
 │       └── drone_controller.ino
-├── iphone_app/                # 未実装
+├── iphone_app/                # Not implemented
 │   ├── package.json
 │   ├── app.json
 │   └── src/
 │       └── App.js
 └── docs/
-    └── 設計書.md
+    └── design_document.md
