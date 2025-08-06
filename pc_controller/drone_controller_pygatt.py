@@ -445,6 +445,26 @@ class DroneControllerGUI:
             width=8
         ).pack(side=tk.LEFT, padx=5)
         
+        # D項実装方法の簡単切り替え
+        d_quick_frame = ttk.Frame(pid_frame)
+        d_quick_frame.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(d_quick_frame, text="D項方法:").pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            d_quick_frame,
+            text="ジャイロ",
+            command=lambda: self.send_command("D_GYRO"),
+            width=8
+        ).pack(side=tk.LEFT, padx=2)
+        
+        ttk.Button(
+            d_quick_frame,
+            text="エラー微分",
+            command=lambda: self.send_command("D_ERROR"),
+            width=8
+        ).pack(side=tk.LEFT, padx=2)
+        
         # その他のパラメータ
         other_params_frame = ttk.LabelFrame(pid_frame, text="その他のパラメータ", padding="5")
         other_params_frame.pack(fill=tk.X, pady=5)
@@ -496,6 +516,34 @@ class DroneControllerGUI:
         self.base_throttle = tk.IntVar(value=1250)
         ttk.Entry(base_thr_frame, textvariable=self.base_throttle, width=6).pack(side=tk.LEFT, padx=2)
         ttk.Button(base_thr_frame, text="設定", command=lambda: self.set_param("BASE_THR", self.base_throttle.get()), width=6).pack(side=tk.LEFT, padx=5)
+        
+        # D項実装方法選択
+        d_method_frame = ttk.LabelFrame(other_params_frame, text="D項実装方法", padding="5")
+        d_method_frame.pack(fill=tk.X, pady=5)
+        
+        d_buttons_frame = ttk.Frame(d_method_frame)
+        d_buttons_frame.pack(fill=tk.X)
+        
+        ttk.Button(
+            d_buttons_frame,
+            text="D_GYRO",
+            command=lambda: self.send_command("D_GYRO"),
+            width=12
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            d_buttons_frame,
+            text="D_ERROR", 
+            command=lambda: self.send_command("D_ERROR"),
+            width=12
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # 説明ラベル
+        ttk.Label(
+            d_method_frame,
+            text="D_GYRO: ジャイロ直接使用（高速応答） | D_ERROR: エラー微分使用（スムーズ）",
+            font=("Arial", 8)
+        ).pack(pady=2)
         
         # 緊急停止
         ttk.Button(

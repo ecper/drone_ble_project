@@ -35,6 +35,7 @@ int16_t max_correction = 100;    // 最大PID補正値 (µs) - 参考コード�
 float pid_scale_factor = 0.5;   // PID出力のスケーリング（1.0でそのまま使用）
 int16_t min_motor_output = 50;   // モーター最小出力保証（ESC_MIN + この値）
 float i_limit = 25.0;           // 積分項制限値
+bool use_gyro_for_derivative = true;  // D項の実装方法（true: ジャイロ使用, false: エラー微分使用）
 
 // PID構造体
 struct PIDController {
@@ -136,7 +137,7 @@ void readIMU() {
   yaw_rate = gz;    // 互換性のため
 }
 
-/* ---------- PID計算（改良版） ---------- */
+/* ---------- PID計算（正しい実装） ---------- */
 float calculatePID(PIDController* pid, float input, float gyro_rate, float dt) {
   float error = pid->setpoint - input;
   
@@ -145,12 +146,22 @@ float calculatePID(PIDController* pid, float input, float gyro_rate, float dt) {
     error = 0.0;
   }
   
-  // 積分項（参考コードの手法）
+  // 積分項
   pid->integral += error * dt;
   pid->integral = constrain(pid->integral, -i_limit, i_limit); // 積分ワインドアップ防止
   
-  // 微分項（参考コードの手法：ジャイロ値を直接使用）
-  float derivative = gyro_rate; // ジャイロ値をそのまま使用（度/秒）
+  // 微分項の計算方法を動的に選択
+  float derivative;
+  if (use_gyro_for_derivative) {
+    // 方法1: ジャイロ値を直接使用（より高速な応答、ノイズに敏感）
+    // 注意: ジャイロ値は角速度なので、エラーの符号と逆にする必要がある
+    derivative = -gyro_rate; // 負号で補正
+  } else {
+    // 方法2: エラーの変化率を使用（標準的なPID、よりスムーズ）
+    derivative = (error - pid->previous_error) / dt;
+    // dtが0の場合の安全チェック
+    if (dt <= 0.001) derivative = 0;
+  }
   
   // PID出力計算
   float output = pid->kp * error + pid->ki * pid->integral + pid->kd * derivative;
@@ -570,6 +581,20 @@ else if (!strcmp(cmd,"TEST0")) {
    return;
  }
  
+ /* D項実装方法切り替え -------------------------------------------- */
+ else if (!strcmp(cmd, "D_GYRO")) {
+   // ジャイロベースのD項に切り替え
+   use_gyro_for_derivative = true;
+   Serial.println("Derivative method: GYRO (faster response)");
+   return;
+ }
+ else if (!strcmp(cmd, "D_ERROR")) {
+   // エラー微分ベースのD項に切り替え
+   use_gyro_for_derivative = false;
+   Serial.println("Derivative method: ERROR_DIFF (smoother)");
+   return;
+ }
+ 
  /* 設定表示 --------------------------------------------------------- */
  else if (!strcmp(cmd,"STATUS")) {
    Serial.println("=== ESC Status ===");
@@ -600,6 +625,8 @@ else if (!strcmp(cmd,"TEST0")) {
    Serial.print("Min Motor Output: "); Serial.print(min_motor_output); Serial.println(" us");
    Serial.print("Base Throttle: "); Serial.println(base_throttle);
    Serial.print("I-term Limit: "); Serial.println(i_limit);
+   Serial.println("=== Derivative Method ===");
+   Serial.print("Using: "); Serial.println(use_gyro_for_derivative ? "GYRO" : "ERROR_DIFF");
    Serial.println("=== Current Attitude ===");
    Serial.print("Roll: "); Serial.print(roll_angle);
    Serial.print(" Pitch: "); Serial.print(pitch_angle);

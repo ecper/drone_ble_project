@@ -1,24 +1,56 @@
 #!/usr/bin/env python3
 
-import dbus
-import dbus.service
-import dbus.exceptions
-import dbus.mainloop.glib
-from gi.repository import GLib
+import platform
 import sys
 import logging
 import time
 import base64
 import binascii
 
+# プラットフォーム検出
+IS_RASPBERRY_PI = platform.machine().startswith('arm') or 'raspberry' in platform.node().lower()
+
+print(f"Platform detected: {platform.system()} {platform.machine()}")
+print(f"Running on Raspberry Pi: {IS_RASPBERRY_PI}")
+
+# D-Bus関連のインポート
+try:
+    import dbus
+    import dbus.service  
+    import dbus.exceptions
+    import dbus.mainloop.glib
+    DBUS_AVAILABLE = True
+    print("D-Bus modules imported successfully")
+except ImportError as e:
+    print(f"D-Bus not available: {e}")
+    DBUS_AVAILABLE = False
+
+# GLib関連のインポート
+try:
+    from gi.repository import GLib
+    GLIB_AVAILABLE = True
+    print("GLib imported successfully")
+except ImportError as e:
+    print(f"GLib not available: {e}")
+    GLIB_AVAILABLE = False
+
 # I2Cライブラリをインポート
 try:
     import smbus2
+    I2C_AVAILABLE = True
+    print("I2C (smbus2) imported successfully")
 except ImportError:
-    print("smbus2 library not found. Installing...")
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "smbus2"])
-    import smbus2 
+    print("I2C (smbus2) not available - using mock")
+    I2C_AVAILABLE = False
+
+# 必要な依存関係チェック
+if not DBUS_AVAILABLE or not GLIB_AVAILABLE:
+    print("Error: Required dependencies missing!")
+    print("Please run: ./install_pc_ble_deps.sh")
+    print("Or install manually:")
+    print("  sudo apt install python3-gi python3-dbus bluez")
+    print("  pip3 install PyGObject dbus-python")
+    sys.exit(1)
 
 # --- ロギング設定 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -47,6 +79,31 @@ STATUS_CHARACTERISTIC_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 # Arduinoに設定するI2Cスレーブアドレス
 I2C_BUS = 1 
 ARDUINO_I2C_ADDRESS = 0x08 # 例: ArduinoのWire.begin(0x08); で設定するアドレス
+
+# モックI2Cクラス（PC環境用）
+class MockI2C:
+    def __init__(self, bus=1):
+        self.bus = bus
+        logger.info(f"Mock I2C bus {bus} initialized")
+    
+    def write_i2c_block_data(self, addr, reg, data):
+        """I2C書き込みをシミュレート"""
+        try:
+            command_str = ''.join([chr(b) for b in data if 32 <= b <= 126])
+            logger.info(f"Mock I2C write to 0x{addr:02X}: '{command_str}'")
+        except Exception as e:
+            logger.info(f"Mock I2C write to 0x{addr:02X}: {data} (raw bytes)")
+        return True
+    
+    def read_i2c_block_data(self, addr, reg, length):
+        """I2C読み取りをシミュレート"""
+        dummy_data = [0x00] * length
+        logger.info(f"Mock I2C read from 0x{addr:02X}: {dummy_data}")
+        return dummy_data
+    
+    def close(self):
+        """バスを閉じる"""
+        logger.info("Mock I2C bus closed")
 
 # I2Cバスオブジェクト
 bus = None # グローバルで宣言
@@ -535,14 +592,17 @@ def main():
     setup_bluetooth_no_pairing()
 
     # 1. I2Cバスの初期化
-    try:
-        bus = smbus2.SMBus(I2C_BUS) # I2Cバスを開く
-        logger.info(f"Successfully opened I2C bus {I2C_BUS}.")
-        # I2Cスレーブ（Arduino）が応答するか簡単なチェック（オプション）
-        # bus.read_byte(ARDUINO_I2C_ADDRESS) 
-    except Exception as e:
-        logger.error(f"Failed to open I2C bus or communicate with Arduino: {e}. Is I2C enabled? Are connections correct?")
-        sys.exit(1)
+    global bus
+    if I2C_AVAILABLE:
+        try:
+            bus = smbus2.SMBus(I2C_BUS) # I2Cバスを開く
+            logger.info(f"Successfully opened I2C bus {I2C_BUS}.")
+        except Exception as e:
+            logger.error(f"Failed to open I2C bus: {e}. Using mock I2C.")
+            bus = MockI2C()
+    else:
+        logger.info("I2C not available, using mock I2C")
+        bus = MockI2C()
 
     # 2. D-Busとアダプターの初期化
     try:
